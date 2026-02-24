@@ -131,3 +131,21 @@ jobs:
               --latest
             echo "Released $RELEASE_TAG"
           fi
+
+      - name: Notify えびログ (Discord)
+        if: steps.mode.outputs.mode == 'release' || steps.mode.outputs.mode == 'skip'
+        env:
+          EBILOG_WEBHOOK_URL: ${{ secrets.EBILOG_WEBHOOK_URL }}
+          RELEASE_TAG: ${{ steps.mode.outputs.mode == 'skip' && steps.read-skip.outputs.release_tag || steps.read.outputs.release_tag }}
+        run: |
+          if [ -z "$EBILOG_WEBHOOK_URL" ]; then
+            echo "EBILOG_WEBHOOK_URL not set, skipping notification"
+            exit 0
+          fi
+          RELEASE_URL="https://github.com/$GITHUB_REPOSITORY/releases/tag/$RELEASE_TAG"
+          MESSAGE="🚀 **claude-code-discord-bridge $RELEASE_TAG** リリースしました！\n$RELEASE_URL"
+          curl -s -o /dev/null -w "%{http_code}" \
+            -H "Content-Type: application/json" \
+            -d "{\"content\":\"$MESSAGE\"}" \
+            "$EBILOG_WEBHOOK_URL"
+          echo "Notified えびログ"
