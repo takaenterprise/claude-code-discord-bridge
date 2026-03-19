@@ -754,11 +754,18 @@ class TestImageOnlyMessage:
     async def test_handle_thread_reply_does_not_crash(self) -> None:
         """_handle_thread_reply with image-only message must not raise."""
         cog = _make_cog()
+        # Use a very short buffer window so the test doesn't wait 3 seconds.
+        cog._buffer_wait_seconds = 0.05
         msg = self._make_image_message()
         cog._run_claude = AsyncMock()
 
         # Must not raise ValueError or any other exception
         await cog._handle_thread_reply(msg)
+
+        # Wait for the buffer flush task to complete.
+        flush_task = cog._buffer_timers.get(msg.channel.id)
+        if flush_task is not None:
+            await flush_task
 
         cog._run_claude.assert_called_once()
         # Verify image_urls were passed through

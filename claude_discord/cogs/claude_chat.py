@@ -84,6 +84,13 @@ class ClaudeChatCog(commands.Cog):
         self._resume_repo = resume_repo or getattr(bot, "resume_repo", None)
         # Settings repo for dynamic model lookup (optional — falls back to runner.model)
         self._settings_repo = settings_repo or getattr(bot, "settings_repo", None)
+        # Message buffering for multi-part pastes (mobile Discord 4000-char limit)
+        # Maps thread_id → list of buffered messages
+        self._message_buffers: dict[int, list[discord.Message]] = {}
+        # Maps thread_id → pending asyncio.Task that will flush the buffer
+        self._buffer_timers: dict[int, asyncio.Task] = {}
+        # Seconds to wait for additional messages before flushing
+        self._buffer_wait_seconds = 3.0
 
     @property
     def active_session_count(self) -> int:
@@ -393,32 +400,106 @@ class ClaudeChatCog(commands.Cog):
         session (graceful interrupt, like pressing Escape) and waits for it to
         finish cleaning up before starting the new session.  This prevents two
         Claude processes from running in parallel in the same thread.
+
+        When Claude is NOT running, messages are buffered for a short window
+        (default 3 seconds) so that multi-part pastes from mobile Discord
+        (which enforces a 4000-character limit) are combined into a single
+        prompt before being sent to Claude.
         """
         thread = message.channel
         assert isinstance(thread, discord.Thread)
 
-        record = await self.repo.get(thread.id)
-        session_id = record.session_id if record else None
-        prompt, image_urls = await self._build_prompt_and_images(message)
-
-        # Nothing to send — ignore silently (e.g. unsupported attachment only).
-        if not prompt and not image_urls:
-            return
-
-        # Interrupt any active session in this thread before starting a new one.
+        # If Claude is actively running, skip buffering — interrupt immediately.
         existing_runner = self._active_runners.get(thread.id)
-        existing_task = self._active_tasks.get(thread.id)
         if existing_runner is not None:
+            prompt, image_urls = await self._build_prompt_and_images(message)
+            if not prompt and not image_urls:
+                return
+
+            existing_task = self._active_tasks.get(thread.id)
             await thread.send("-# ⚡ Interrupted. Starting with new instruction...")
             await existing_runner.interrupt()
-            # Wait for the interrupted _run_claude to finish its finally block
-            # (which releases the semaphore and removes entries from dicts).
             if existing_task is not None and not existing_task.done():
                 with contextlib.suppress(Exception):
                     await existing_task
 
+            record = await self.repo.get(thread.id)
+            session_id = record.session_id if record else None
+            await self._run_claude(
+                message, thread, prompt, session_id=session_id, image_urls=image_urls
+            )
+            return
+
+        # No active session — buffer the message for multi-part paste support.
+        if thread.id not in self._message_buffers:
+            self._message_buffers[thread.id] = []
+        self._message_buffers[thread.id].append(message)
+
+        # Visual feedback: react with ⏳ so the user knows we're waiting
+        with contextlib.suppress(Exception):
+            await message.add_reaction("\u23f3")
+
+        # Cancel any pending flush timer and start a new one.
+        existing_timer = self._buffer_timers.get(thread.id)
+        if existing_timer is not None:
+            existing_timer.cancel()
+
+        self._buffer_timers[thread.id] = asyncio.create_task(
+            self._flush_buffer(thread.id)
+        )
+
+    async def _flush_buffer(self, thread_id: int) -> None:
+        """Wait for the buffer window, then combine and process all buffered messages.
+
+        Called as an asyncio.Task from _handle_thread_reply.  The 3-second delay
+        allows multiple rapid messages (e.g. split pastes from mobile) to be
+        collected and joined into a single Claude prompt.
+        """
+        await asyncio.sleep(self._buffer_wait_seconds)
+
+        # Pop the buffer and timer — we own this flush.
+        messages = self._message_buffers.pop(thread_id, [])
+        self._buffer_timers.pop(thread_id, None)
+
+        if not messages:
+            return
+
+        # Remove ⏳ reactions from all buffered messages.
+        for msg in messages:
+            with contextlib.suppress(Exception):
+                await msg.remove_reaction("\u23f3", self.bot.user)
+
+        # Build combined prompt from all buffered messages.
+        combined_prompts: list[str] = []
+        combined_images: list[str] = []
+        for msg in messages:
+            prompt, images = await self._build_prompt_and_images(msg)
+            if prompt:
+                combined_prompts.append(prompt)
+            combined_images.extend(images)
+
+        combined_prompt = "\n".join(combined_prompts)
+        if not combined_prompt and not combined_images:
+            return
+
+        thread_channel = messages[0].channel
+        assert isinstance(thread_channel, discord.Thread)
+
+        record = await self.repo.get(thread_id)
+        session_id = record.session_id if record else None
+
+        # Show how many messages were combined (only if > 1).
+        if len(messages) > 1:
+            await thread_channel.send(
+                f"-# \U0001f4e8 {len(messages)} messages combined into one prompt"
+            )
+
         await self._run_claude(
-            message, thread, prompt, session_id=session_id, image_urls=image_urls
+            messages[-1],  # 最後のメッセージにステータス絵文字を付ける
+            thread_channel,
+            combined_prompt,
+            session_id=session_id,
+            image_urls=combined_images or None,
         )
 
     async def _build_prompt_and_images(self, message: discord.Message) -> tuple[str, list[str]]:
