@@ -17,6 +17,7 @@ from .cogs.claude_chat import ClaudeChatCog
 from .database.ask_repo import PendingAskRepository
 from .database.lounge_repo import LoungeRepository
 from .database.models import init_db
+from .database.notification_repo import NotificationRepository
 from .database.repository import SessionRepository
 from .utils.logger import setup_logging
 
@@ -48,6 +49,9 @@ def load_config() -> dict[str, str]:
         "timeout": os.getenv("SESSION_TIMEOUT_SECONDS", "300"),
         "owner_id": os.getenv("DISCORD_OWNER_ID", ""),
         "coordination_channel_id": os.getenv("COORDINATION_CHANNEL_ID", ""),
+        "api_host": os.getenv("API_HOST", "0.0.0.0"),
+        "api_port": os.getenv("API_PORT", "8080"),
+        "api_secret": os.getenv("API_SECRET", ""),
     }
 
 
@@ -66,6 +70,8 @@ async def main() -> None:
     repo = SessionRepository(db_path)
     ask_repo = PendingAskRepository(db_path)
     lounge_repo = LoungeRepository(db_path)
+    notification_repo = NotificationRepository(db_path)
+    await notification_repo.init_db()
     runner = ClaudeRunner(
         command=config["claude_command"],
         model=config["claude_model"],
@@ -97,6 +103,26 @@ async def main() -> None:
         lounge_repo=lounge_repo,
     )
 
+    # API server (serves /paste web form and REST endpoints)
+    api_server = None
+    try:
+        from .ext.api_server import ApiServer
+
+        api_server = ApiServer(
+            repo=notification_repo,
+            bot=bot,
+            default_channel_id=int(config["channel_id"]),
+            host=config["api_host"],
+            port=int(config["api_port"]),
+            api_secret=config["api_secret"] or None,
+            lounge_repo=lounge_repo,
+            lounge_channel_id=coordination_channel_id,
+            session_repo=repo,
+        )
+        runner.api_port = int(config["api_port"])
+    except ImportError:
+        logger.info("aiohttp not installed — API server disabled")
+
     async with bot:
         await bot.add_cog(cog)
 
@@ -105,13 +131,21 @@ async def main() -> None:
         if deleted:
             logger.info("Cleaned up %d old sessions", deleted)
 
+        # Start API server
+        if api_server is not None:
+            await api_server.start()
+
         # Handle signals (add_signal_handler is not supported on Windows)
         if sys.platform != "win32":
             loop = asyncio.get_running_loop()
             for sig in (signal.SIGINT, signal.SIGTERM):
                 loop.add_signal_handler(sig, lambda: asyncio.create_task(bot.close()))
 
-        await bot.start(config["token"])
+        try:
+            await bot.start(config["token"])
+        finally:
+            if api_server is not None:
+                await api_server.stop()
 
 
 if __name__ == "__main__":
