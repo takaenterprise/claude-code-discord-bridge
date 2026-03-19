@@ -267,6 +267,31 @@ class ClaudeChatCog(commands.Cog):
         asyncio.create_task(self._run_claude(seed_message, thread, prompt, session_id=session_id))
         return thread
 
+    async def send_to_thread(
+        self,
+        thread: discord.Thread,
+        prompt: str,
+    ) -> None:
+        """Send a prompt to an existing thread and run Claude.
+
+        API-initiated equivalent of ``_handle_thread_reply`` — bypasses
+        ``on_message`` so that text injected via the Web paste form (or
+        ``POST /api/paste``) is processed as if the user had typed it.
+
+        A seed message is posted inside the thread so that ``StatusManager``
+        has a concrete ``discord.Message`` to attach reaction-emoji status to.
+        """
+        record = await self.repo.get(thread.id)
+        session_id = record.session_id if record else None
+
+        # Post the pasted text (truncated for display) so the thread has context.
+        display = prompt if len(prompt) <= 2000 else prompt[:1997] + "..."
+        seed_message = await thread.send(f"\U0001f4cb **Pasted text**\n{display}")
+
+        asyncio.create_task(
+            self._run_claude(seed_message, thread, prompt, session_id=session_id)
+        )
+
     async def cog_unload(self) -> None:
         """Mark all mid-run Claude sessions for auto-resume on the next bot startup.
 

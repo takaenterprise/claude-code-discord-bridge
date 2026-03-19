@@ -105,6 +105,9 @@ class ApiServer:
         self.app.router.add_post("/api/spawn", self.spawn)
         # Startup resume routes
         self.app.router.add_post("/api/mark-resume", self.mark_resume)
+        # Web paste form (GET = HTML page, POST = send text to thread)
+        self.app.router.add_get("/paste", self.paste_form)
+        self.app.router.add_post("/api/paste", self.paste_submit)
 
     @web.middleware
     async def _auth_middleware(
@@ -113,7 +116,7 @@ class ApiServer:
         handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
     ) -> web.StreamResponse:
         """Bearer token authentication middleware."""
-        if request.path == "/api/health":
+        if request.path in ("/api/health", "/paste"):
             return await handler(request)
 
         auth_header = request.headers.get("Authorization", "")
@@ -592,6 +595,89 @@ class ApiServer:
         )
         return web.json_response({"status": "marked", "id": row_id}, status=201)
 
+    # ------------------------------------------------------------------
+    # Web paste form (/paste, /api/paste)
+    # ------------------------------------------------------------------
+
+    async def paste_form(self, request: web.Request) -> web.Response:
+        """GET /paste — mobile-friendly paste form for long text."""
+        # Collect active threads from session_repo for the dropdown.
+        thread_options = ""
+        if self.session_repo is not None:
+            try:
+                sessions = await self.session_repo.list_all(limit=20)
+                for s in sessions:
+                    tid = s.thread_id
+                    # Try to resolve thread name from Discord cache.
+                    ch = self.bot.get_channel(tid)
+                    name = getattr(ch, "name", None) or str(tid)
+                    thread_options += (
+                        f'<option value="{tid}">{name}</option>\n'
+                    )
+            except Exception:
+                logger.debug("paste_form: failed to list sessions", exc_info=True)
+
+        html = _PASTE_HTML.replace("{{THREAD_OPTIONS}}", thread_options)
+        return web.Response(text=html, content_type="text/html")
+
+    async def paste_submit(self, request: web.Request) -> web.Response:
+        """POST /api/paste — send pasted text to a Discord thread and run Claude.
+
+        Body (JSON):
+            text: The full text to send (required).
+            thread_id: Discord thread ID (required).
+
+        Returns (201):
+            ``{"status": "sent", "length": <chars>}``
+        """
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        text = (data.get("text") or "").strip()
+        if not text:
+            return web.json_response({"error": "text is required"}, status=400)
+
+        raw_thread_id = data.get("thread_id")
+        if not raw_thread_id:
+            return web.json_response({"error": "thread_id is required"}, status=400)
+
+        try:
+            thread_id = int(raw_thread_id)
+        except (TypeError, ValueError):
+            return web.json_response({"error": "thread_id must be an integer"}, status=400)
+
+        import discord as _discord
+
+        raw = self.bot.get_channel(thread_id)
+        if raw is None:
+            try:
+                raw = await self.bot.fetch_channel(thread_id)
+            except Exception as exc:
+                return web.json_response({"error": str(exc)}, status=500)
+
+        if not isinstance(raw, _discord.Thread):
+            return web.json_response({"error": "thread_id must point to a thread"}, status=400)
+
+        from ..cogs.claude_chat import ClaudeChatCog
+
+        cog: ClaudeChatCog | None = self.bot.cogs.get("ClaudeChatCog")  # type: ignore[assignment]
+        if cog is None:
+            return web.json_response({"error": "ClaudeChatCog is not loaded"}, status=503)
+
+        try:
+            await cog.send_to_thread(raw, text)
+        except Exception as exc:
+            logger.error("paste_submit failed: %s", exc, exc_info=True)
+            return web.json_response({"error": str(exc)}, status=500)
+
+        logger.info("Paste sent to thread %d (%d chars)", thread_id, len(text))
+        return web.json_response(
+            {"status": "sent", "length": len(text)},
+            status=201,
+        )
+
     async def _send_lounge_to_discord(self, label: str, message: str, posted_at: str) -> None:
         """Send a lounge message to the configured Discord lounge channel."""
         try:
@@ -619,3 +705,111 @@ class ApiServer:
             color=color or 0x00BFFF,
             timestamp=datetime.now(),
         )
+
+
+# ---------------------------------------------------------------------------
+# HTML template for /paste (mobile-friendly, self-contained)
+# ---------------------------------------------------------------------------
+
+_PASTE_HTML = """\
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paste to Claude</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #1a1a2e; color: #eee; padding: 16px;
+    min-height: 100vh;
+  }
+  h1 { font-size: 1.3rem; margin-bottom: 12px; text-align: center; }
+  label { display: block; font-size: 0.9rem; margin-bottom: 4px; color: #aaa; }
+  select, textarea {
+    width: 100%; padding: 10px; border: 1px solid #444;
+    border-radius: 8px; background: #16213e; color: #eee;
+    font-size: 1rem; margin-bottom: 12px;
+  }
+  textarea { min-height: 50vh; resize: vertical; }
+  .char-count {
+    text-align: right; font-size: 0.8rem; color: #888;
+    margin-top: -8px; margin-bottom: 12px;
+  }
+  button {
+    width: 100%; padding: 14px; border: none; border-radius: 8px;
+    background: #5865f2; color: #fff; font-size: 1.1rem;
+    font-weight: bold; cursor: pointer;
+  }
+  button:disabled { background: #444; cursor: not-allowed; }
+  button:active:not(:disabled) { background: #4752c4; }
+  .status {
+    margin-top: 12px; padding: 10px; border-radius: 8px;
+    text-align: center; display: none;
+  }
+  .status.ok { display: block; background: #1b4332; color: #95d5b2; }
+  .status.err { display: block; background: #3d0000; color: #ff6b6b; }
+</style>
+</head>
+<body>
+<h1>Paste to Claude</h1>
+
+<label for="thread">Thread</label>
+<select id="thread">
+  {{THREAD_OPTIONS}}
+</select>
+
+<label for="text">Text</label>
+<textarea id="text" placeholder="Paste long text here..."></textarea>
+<div class="char-count"><span id="count">0</span> chars</div>
+
+<button id="send" onclick="sendText()">Send to Claude</button>
+<div id="status" class="status"></div>
+
+<script>
+const ta = document.getElementById('text');
+const counter = document.getElementById('count');
+ta.addEventListener('input', () => { counter.textContent = ta.value.length; });
+
+async function sendText() {
+  const btn = document.getElementById('send');
+  const st = document.getElementById('status');
+  const threadId = document.getElementById('thread').value;
+  const text = ta.value.trim();
+
+  if (!threadId) { st.className='status err'; st.textContent='Select a thread'; return; }
+  if (!text) { st.className='status err'; st.textContent='Paste text first'; return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+  st.className = 'status';
+
+  try {
+    const res = await fetch('/api/paste', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ thread_id: threadId, text: text })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      st.className = 'status ok';
+      st.textContent = 'Sent! (' + data.length + ' chars)';
+      ta.value = '';
+      counter.textContent = '0';
+    } else {
+      st.className = 'status err';
+      st.textContent = 'Error: ' + (data.error || res.statusText);
+    }
+  } catch (e) {
+    st.className = 'status err';
+    st.textContent = 'Network error: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Send to Claude';
+  }
+}
+</script>
+</body>
+</html>
+"""
