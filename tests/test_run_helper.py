@@ -431,12 +431,12 @@ class TestRunClaudeInThread:
             and "Thinking" in (c.kwargs["embed"].title or "")
         ]
         assert len(thinking_embeds) == 1
-        # Description must use a plain code block (no spoiler) for guaranteed readability
-        embed = thinking_embeds[0].kwargs["embed"]
-        assert embed.description is not None
-        assert embed.description.startswith("```")
-        assert embed.description.endswith("```")
-        assert "||" not in embed.description
+        # Code block must be in message content (not embed description) for mobile readability
+        content = thinking_embeds[0].kwargs.get("content")
+        assert content is not None
+        assert content.startswith("```")
+        assert content.endswith("```")
+        assert "||" not in content
 
     @pytest.mark.asyncio
     async def test_redacted_thinking_posted_as_embed(

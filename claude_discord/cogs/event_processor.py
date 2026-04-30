@@ -188,7 +188,8 @@ class EventProcessor:
         """Handle ASSISTANT events — thinking, streaming text, tool use."""
         # Extended thinking — only post on complete events (not partials).
         if event.thinking and not event.is_partial:
-            await self._config.thread.send(embed=thinking_embed(event.thinking))
+            content, embed = thinking_embed(event.thinking)
+            await self._config.thread.send(content=content, embed=embed)
 
         # Redacted thinking — only post on complete events.
         if event.has_redacted_thinking and not event.is_partial:
@@ -236,13 +237,14 @@ class EventProcessor:
             if len(truncated.split("\n")) > _COLLAPSED_LINES:
                 from ..discord_ui.views import ToolResultView
 
-                embed = tool_result_preview_embed(title, truncated)
+                content, embed = tool_result_preview_embed(title, truncated)
                 view = ToolResultView(title, truncated)
                 with contextlib.suppress(Exception):
-                    await tool_msg.edit(embed=embed, view=view)
+                    await tool_msg.edit(content=content, embed=embed, view=view)
             else:
+                content, embed = tool_result_embed(title, truncated)
                 with contextlib.suppress(Exception):
-                    await tool_msg.edit(embed=tool_result_embed(title, truncated))
+                    await tool_msg.edit(content=content, embed=embed)
 
     async def _on_progress(self, event: StreamEvent) -> None:
         """Handle PROGRESS events — reset stall timer (compact in progress)."""
@@ -354,22 +356,22 @@ class EventProcessor:
     async def _handle_plan_approval(self, event: StreamEvent) -> None:
         """Post the plan embed with Approve/Cancel buttons (ExitPlanMode)."""
         plan_text = event.text or ""
-        embed = plan_embed(plan_text)
+        content, embed = plan_embed(plan_text)
         # ExitPlanMode does not carry a request_id in the current CLI protocol;
         # we use the session_id as a stable identifier for the inject payload.
         request_id = self._state.session_id or "plan"
         view = PlanApprovalView(self._config.runner, request_id)
         with contextlib.suppress(Exception):
-            await self._config.thread.send(embed=embed, view=view)
+            await self._config.thread.send(content=content, embed=embed, view=view)
         logger.info("Plan approval prompt posted (session=%s)", request_id)
 
     async def _handle_permission_request(self, event: StreamEvent) -> None:
         """Post permission embed with Allow/Deny buttons."""
         assert event.permission_request is not None
-        embed = permission_embed(event.permission_request)
+        content, embed = permission_embed(event.permission_request)
         view = PermissionView(self._config.runner, event.permission_request)
         with contextlib.suppress(Exception):
-            await self._config.thread.send(embed=embed, view=view)
+            await self._config.thread.send(content=content, embed=embed, view=view)
         logger.info(
             "Permission request posted: %s (request_id=%s)",
             event.permission_request.tool_name,

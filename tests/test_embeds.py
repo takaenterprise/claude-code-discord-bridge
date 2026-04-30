@@ -13,42 +13,42 @@ from claude_discord.discord_ui.embeds import (
 
 
 class TestThinkingEmbed:
-    def test_description_uses_plain_code_block(self) -> None:
-        """Thinking embed must use a plain code block (no spoiler) for guaranteed readability.
+    def test_content_uses_plain_code_block(self) -> None:
+        """Code block must be in content (not embed description) for mobile readability."""
+        content, embed = thinking_embed("Let me think about this.")
+        assert content is not None
+        assert content.startswith("```\n")
+        assert content.endswith("\n```")
+        assert "||" not in content
 
-        spoiler+code block (||```text```||) does not apply code block styling
-        when revealed inside Discord embed descriptions — the embed accent color
-        bleeds into the revealed text, making it unreadable.
-        """
-        embed = thinking_embed("Let me think about this.")
-        assert embed.description is not None
-        assert embed.description.startswith("```\n")
-        assert embed.description.endswith("\n```")
-        assert "||" not in embed.description
+    def test_embed_has_no_description(self) -> None:
+        """Embed should carry only the title, no description (code block is in content)."""
+        _content, embed = thinking_embed("Let me think about this.")
+        assert embed.description is None
 
     def test_thinking_text_preserved(self) -> None:
-        """Original thinking text should appear inside the code block."""
+        """Original thinking text should appear inside the code block content."""
         text = "Step 1: analyze. Step 2: respond."
-        embed = thinking_embed(text)
-        assert text in embed.description
+        content, _embed = thinking_embed(text)
+        assert text in content
 
     def test_long_text_truncated(self) -> None:
         """Text exceeding the limit should be truncated with a notice."""
         long_text = "x" * 5000
-        embed = thinking_embed(long_text)
-        assert len(embed.description) <= 4096
-        assert "(truncated)" in embed.description
+        content, _embed = thinking_embed(long_text)
+        assert len(content) <= 2000
+        assert "(truncated)" in content
 
     def test_short_text_not_truncated(self) -> None:
         """Short text should not be modified."""
         text = "Brief thought."
-        embed = thinking_embed(text)
-        assert "(truncated)" not in embed.description
-        assert text in embed.description
+        content, _embed = thinking_embed(text)
+        assert "(truncated)" not in content
+        assert text in content
 
     def test_title(self) -> None:
         """Embed should have the Thinking title."""
-        embed = thinking_embed("x")
+        _content, embed = thinking_embed("x")
         assert embed.title is not None
         assert "Thinking" in embed.title
 
@@ -68,7 +68,7 @@ class TestSessionCompleteEmbed:
     def test_no_tokens_omits_token_line(self) -> None:
         embed = session_complete_embed(cost_usd=0.01)
         assert embed.description is not None
-        assert "📊" not in embed.description
+        assert "\U0001f4ca" not in embed.description
 
     def test_zero_cache_omits_cache_pct(self) -> None:
         embed = session_complete_embed(input_tokens=500, output_tokens=100, cache_read_tokens=0)
@@ -170,7 +170,7 @@ class TestSessionCompleteContextUsage:
         )
         assert embed.description is not None
         # Should show ⚠️ in the description line instead of "until compact"
-        assert "⚠️" in embed.description
+        assert "\u26a0\ufe0f" in embed.description
         assert "until compact" not in embed.description
 
     def test_no_warning_below_threshold(self) -> None:
@@ -249,38 +249,40 @@ class TestToolUseEmbed:
 
 
 class TestToolResultEmbed:
-    """Tests for tool_result_embed — uses description for generous output display."""
+    """Tests for tool_result_embed — code block in content, not embed description."""
 
-    def test_result_in_description_not_field(self) -> None:
-        """Result content must be in description (4096 limit) not a field (1024 limit)."""
-        embed = tool_result_embed("🔧 Running: ls...", "file1\nfile2\nfile3")
-        assert embed.description is not None
-        assert "file1" in embed.description
-        assert len(embed.fields) == 0  # no fields
+    def test_result_in_content_not_embed(self) -> None:
+        """Result content must be in content (message text), not embed description."""
+        content, embed = tool_result_embed("\U0001f527 Running: ls...", "file1\nfile2\nfile3")
+        assert content is not None
+        assert "file1" in content
+        assert embed.description is None
+        assert len(embed.fields) == 0
 
     def test_result_wrapped_in_code_block(self) -> None:
-        embed = tool_result_embed("🔧 Running: ls...", "output here")
-        assert embed.description is not None
-        assert embed.description.startswith("```")
-        assert embed.description.endswith("```")
+        content, _embed = tool_result_embed("\U0001f527 Running: ls...", "output here")
+        assert content is not None
+        assert content.startswith("```")
+        assert content.endswith("```")
 
     def test_title_strips_trailing_dots(self) -> None:
         """The '...' suffix from the in-progress title should be stripped."""
-        embed = tool_result_embed("🔧 Running: ls...", "ok")
+        _content, embed = tool_result_embed("\U0001f527 Running: ls...", "ok")
         assert embed.title is not None
         assert not embed.title.endswith(".")
 
     def test_30_lines_fit_without_truncation(self) -> None:
         """30 lines of typical output should display in full."""
-        lines = [f"Step {i:02d}/30 — output text here" for i in range(1, 31)]
-        content = "\n".join(lines)
-        embed = tool_result_embed("🔧 Running: cmd...", content)
-        assert embed.description is not None
+        lines = [f"Step {i:02d}/30 \u2014 output text here" for i in range(1, 31)]
+        result_text = "\n".join(lines)
+        content, _embed = tool_result_embed("\U0001f527 Running: cmd...", result_text)
+        assert content is not None
         for line in lines:
-            assert line in embed.description
+            assert line in content
 
-    def test_empty_result_no_description(self) -> None:
-        embed = tool_result_embed("🔧 Running: ls...", "")
+    def test_empty_result_no_content(self) -> None:
+        content, embed = tool_result_embed("\U0001f527 Running: ls...", "")
+        assert content is None
         assert embed.description is None
 
 
@@ -296,9 +298,9 @@ class TestRedactedThinkingEmbed:
         assert len(embed.description) > 0
 
     def test_color_distinct_from_regular_thinking(self) -> None:
-        regular = thinking_embed("x")
+        _content, regular_embed = thinking_embed("x")
         redacted = redacted_thinking_embed()
-        assert redacted.colour.value != regular.colour.value
+        assert redacted.colour.value != regular_embed.colour.value
 
 
 class TestTodoEmbed:
@@ -315,9 +317,9 @@ class TestTodoEmbed:
         ]
         embed = todo_embed(todos)
         assert embed.description is not None
-        assert "✅" in embed.description
-        assert "🔄" in embed.description
-        assert "⬜" in embed.description
+        assert "\u2705" in embed.description
+        assert "\U0001f504" in embed.description
+        assert "\u2b1c" in embed.description
 
     def test_in_progress_shows_active_form(self) -> None:
         from claude_discord.claude.types import TodoItem
@@ -363,46 +365,46 @@ class TestToolResultPreviewEmbed:
     def test_first_3_lines_visible(self) -> None:
         from claude_discord.discord_ui.embeds import tool_result_preview_embed
 
-        content = "\n".join(f"line{i}" for i in range(10))
-        embed = tool_result_preview_embed("🔧 Running: cat", content)
+        full = "\n".join(f"line{i}" for i in range(10))
+        content, _embed = tool_result_preview_embed("\U0001f527 Running: cat", full)
 
-        assert embed.description is not None
-        assert "line0" in embed.description
-        assert "line1" in embed.description
-        assert "line2" in embed.description
+        assert content is not None
+        assert "line0" in content
+        assert "line1" in content
+        assert "line2" in content
 
     def test_remaining_lines_hidden(self) -> None:
         from claude_discord.discord_ui.embeds import tool_result_preview_embed
 
-        content = "\n".join(f"line{i}" for i in range(10))
-        embed = tool_result_preview_embed("🔧 Running: cat", content)
+        full = "\n".join(f"line{i}" for i in range(10))
+        content, _embed = tool_result_preview_embed("\U0001f527 Running: cat", full)
 
-        assert "line3" not in embed.description
+        assert "line3" not in content
 
     def test_hidden_line_count_shown(self) -> None:
         from claude_discord.discord_ui.embeds import tool_result_preview_embed
 
-        content = "\n".join(f"line{i}" for i in range(10))
-        embed = tool_result_preview_embed("🔧 Running: cat", content)
+        full = "\n".join(f"line{i}" for i in range(10))
+        content, _embed = tool_result_preview_embed("\U0001f527 Running: cat", full)
 
         # 10 lines total, 3 shown → 7 hidden
-        assert "+7" in embed.description
+        assert "+7" in content
 
     def test_short_content_shows_all(self) -> None:
         """3 lines or fewer — no hidden-line hint needed."""
         from claude_discord.discord_ui.embeds import tool_result_preview_embed
 
-        content = "line1\nline2\nline3"
-        embed = tool_result_preview_embed("🔧 Running: cat", content)
+        full = "line1\nline2\nline3"
+        content, _embed = tool_result_preview_embed("\U0001f527 Running: cat", full)
 
-        assert "line1" in embed.description
-        assert "line2" in embed.description
-        assert "line3" in embed.description
-        assert "lines" not in embed.description  # No hidden-line hint
+        assert "line1" in content
+        assert "line2" in content
+        assert "line3" in content
+        assert "lines" not in content  # No hidden-line hint
 
     def test_title_strips_trailing_dots(self) -> None:
         from claude_discord.discord_ui.embeds import tool_result_preview_embed
 
-        embed = tool_result_preview_embed("🔧 Running: cat...", "output")
+        _content, embed = tool_result_preview_embed("\U0001f527 Running: cat...", "output")
         assert embed.title is not None
         assert not embed.title.endswith(".")

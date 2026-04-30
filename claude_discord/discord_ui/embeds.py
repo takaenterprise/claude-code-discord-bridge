@@ -131,65 +131,65 @@ def session_complete_embed(
 _PREVIEW_LINES = 3
 
 
-def tool_result_preview_embed(tool_title: str, full_content: str) -> discord.Embed:
-    """Collapsed embed showing the first _PREVIEW_LINES lines and a hidden-count hint.
+def tool_result_preview_embed(tool_title: str, full_content: str) -> tuple[str | None, discord.Embed]:
+    """Collapsed view showing the first _PREVIEW_LINES lines and a hidden-count hint.
 
+    Returns (content, embed). Code block is in ``content`` (regular message text)
+    for better readability on mobile Discord dark mode.
     Paired with ToolResultView so the user can expand on demand.
     """
     title = tool_title.rstrip(".")
     embed = discord.Embed(title=title[:256], color=COLOR_INFO)
+    content = None
     if full_content:
         lines = full_content.split("\n")
         preview = "\n".join(lines[:_PREVIEW_LINES])
         hidden = len(lines) - _PREVIEW_LINES
         if hidden > 0:
             preview += f"\n... +{hidden} lines"
-        embed.description = f"```\n{preview}\n```"
-    return embed
+        content = f"```\n{preview}\n```"
+    return content, embed
 
 
-def tool_result_embed(tool_title: str, result_content: str) -> discord.Embed:
-    """Create an embed for a completed tool with its result.
+def tool_result_embed(tool_title: str, result_content: str) -> tuple[str | None, discord.Embed]:
+    """Create a result display for a completed tool.
 
-    Replaces the in-progress tool embed once the result is available.
-    Uses description (4096-char limit) rather than a field (1024-char limit)
-    so that up to ~30 lines of output can be shown without truncation.
+    Returns (content, embed). Code block is in ``content`` (regular message text)
+    for better readability on mobile Discord dark mode. The embed carries only
+    the title and colour.
     """
-    # Strip the trailing "..." from in-progress title
     title = tool_title.rstrip(".")
     embed = discord.Embed(
         title=title[:256],
         color=COLOR_INFO,
     )
+    content = None
     if result_content:
-        # Reserve 8 chars for code block markers (```\n … \n```)
-        max_content = 4096 - 8
+        # 1992 = 2000 - 8 chars for code block markers
+        max_content = 1992
         display = result_content[:max_content]
-        embed.description = f"```\n{display}\n```"
-    return embed
+        content = f"```\n{display}\n```"
+    return content, embed
 
 
-def thinking_embed(thinking_text: str) -> discord.Embed:
-    """Create an embed for extended thinking content.
+def thinking_embed(thinking_text: str) -> tuple[str, discord.Embed]:
+    """Create a thinking display for extended thinking content.
 
-    Uses a plain code block (no spoiler) so the text is always rendered with
-    Discord's own code block background/foreground — guaranteed readable in
-    both dark and light themes regardless of the embed accent color.
-
-    Note: spoiler + code block combinations (||```text```||) do not apply code
-    block styling when revealed inside embed descriptions; the text still picks
-    up the embed accent color and can become unreadable.
+    Returns (content, embed). Code block is in ``content`` (regular message text)
+    for better readability on mobile Discord dark mode. The embed carries only
+    the title and colour.
     """
-    # Reserve chars for code block markers: ```\n...\n``` = 8 chars overhead
-    max_text = 4096 - 8 - len("\n... (truncated)")
+    # 1992 = 2000 - 8 chars for code block markers
+    max_text = 1992 - len("\n... (truncated)")
     truncated = thinking_text[:max_text]
     if len(thinking_text) > max_text:
         truncated += "\n... (truncated)"
-    return discord.Embed(
+    content = f"```\n{truncated}\n```"
+    embed = discord.Embed(
         title="\U0001f4ad Thinking",
-        description=f"```\n{truncated}\n```",
         color=COLOR_THINKING,
     )
+    return content, embed
 
 
 def redacted_thinking_embed() -> discord.Embed:
@@ -286,50 +286,56 @@ def todo_embed(todos: list[TodoItem]) -> discord.Embed:
     )
 
 
-def plan_embed(plan_text: str) -> discord.Embed:
-    """Create an embed showing Claude's plan with Approve/Cancel buttons pending.
+def plan_embed(plan_text: str) -> tuple[str | None, discord.Embed]:
+    """Create a plan display with Approve/Cancel buttons pending.
 
-    Posted when ExitPlanMode is detected: Claude has finished planning and is
-    waiting for the user to approve or cancel before executing.
+    Returns (content, embed). Code block is in ``content`` (regular message text)
+    for better readability on mobile Discord dark mode.
     """
-    max_text = 4096 - 8 - len("\n... (truncated)")
+    embed = discord.Embed(
+        title="\U0001f4cb Plan ready \u2014 approve to execute",
+        color=0x2ECC71,  # Emerald green — action required
+    )
+    if not plan_text:
+        embed.description = "*(no plan text)*"
+        return None, embed
+    max_text = 1992 - len("\n... (truncated)")
     truncated = plan_text[:max_text]
     if len(plan_text) > max_text:
         truncated += "\n... (truncated)"
-    return discord.Embed(
-        title="📋 Plan ready — approve to execute",
-        description=f"```\n{truncated}\n```" if truncated else "*(no plan text)*",
-        color=0x2ECC71,  # Emerald green — action required
-    )
+    content = f"```\n{truncated}\n```"
+    return content, embed
 
 
-def permission_embed(request) -> discord.Embed:
-    """Create an embed for a tool permission request.
+def permission_embed(request) -> tuple[str, discord.Embed]:
+    """Create a permission request display.
 
-    Displays the tool name and its input arguments so the user can make an
-    informed Allow/Deny decision.
+    Returns (content, embed). The JSON code block is in ``content`` (regular
+    message text) for better readability on mobile Discord dark mode.
+    The embed carries the title and tool name only.
     """
     import json
 
     tool_name = request.tool_name
     tool_input = request.tool_input
 
-    # Format tool input as readable JSON (compact but not one-liner for long inputs).
     try:
         input_str = json.dumps(tool_input, ensure_ascii=False, indent=2)
     except Exception:
         input_str = str(tool_input)
 
-    max_input = 4096 - 8 - len(f"**Tool:** `{tool_name}`\n\n**Input:**\n```json\n\n```")
+    # 1992 = 2000 - 8 for ```json\n...\n```
+    max_input = 1992 - 5  # minus "json\n"
     if len(input_str) > max_input:
         input_str = input_str[:max_input] + "\n... (truncated)"
 
-    description = f"**Tool:** `{tool_name}`\n\n**Input:**\n```json\n{input_str}\n```"
-    return discord.Embed(
-        title="🔐 Permission required",
-        description=description[:4096],
+    content = f"```json\n{input_str}\n```"
+    embed = discord.Embed(
+        title="\U0001f510 Permission required",
+        description=f"**Tool:** `{tool_name}`",
         color=0xE74C3C,  # Alizarin red — requires attention
     )
+    return content, embed
 
 
 def elicitation_embed(request) -> discord.Embed:
