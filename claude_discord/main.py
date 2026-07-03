@@ -8,6 +8,7 @@ import os
 import signal
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
 
@@ -20,6 +21,9 @@ from .database.lounge_repo import LoungeRepository
 from .database.models import init_db
 from .database.repository import SessionRepository
 from .utils.logger import setup_logging
+
+if TYPE_CHECKING:
+    from .worktree import WorktreeManager
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +57,7 @@ def load_config() -> dict[str, str]:
         "allowed_skills": os.getenv("ALLOWED_SKILLS", ""),
         "coordination_channel_id": os.getenv("COORDINATION_CHANNEL_ID", ""),
         "append_system_prompt": os.getenv("APPEND_SYSTEM_PROMPT", ""),
+        "worktree_base_dir": os.getenv("WORKTREE_BASE_DIR", ""),
     }
 
 
@@ -76,10 +81,26 @@ def create_runner(config: dict[str, str]) -> BaseRunner:
         )
 
     raise ValueError(
-        f"Unknown RUNNER_BACKEND: {backend!r}. "
-        f"Supported: 'claude'. "
-        f"Future: 'codex', 'api'."
+        f"Unknown RUNNER_BACKEND: {backend!r}. Supported: 'claude'. Future: 'codex', 'api'."
     )
+
+
+def create_worktree_manager(config: dict[str, str]) -> WorktreeManager | None:
+    """Create a WorktreeManager when WORKTREE_BASE_DIR is configured.
+
+    Mirrors ``setup.setup_bridge()``: setting the env var opts in to automatic
+    cleanup of session worktrees (at session end and at bot startup, see
+    ``ClaudeDiscordBot._cleanup_orphaned_worktrees``). Empty/unset = disabled.
+    """
+    base_dir = config.get("worktree_base_dir", "")
+    if not base_dir:
+        return None
+
+    from .worktree import WorktreeManager
+
+    manager = WorktreeManager(base_dir=base_dir)
+    logger.info("WorktreeManager enabled (base_dir=%s)", base_dir)
+    return manager
 
 
 async def main() -> None:
@@ -110,6 +131,7 @@ async def main() -> None:
         ask_repo=ask_repo,
         lounge_repo=lounge_repo,
         lounge_channel_id=coordination_channel_id,  # lounge uses the same channel
+        worktree_manager=create_worktree_manager(config),
     )
 
     # Build allowed_user_ids early (used by both ClaudeChatCog and SkillCommandCog)
@@ -150,9 +172,9 @@ async def main() -> None:
     repo_viewer_cog = RepoViewerCog(bot)
 
     # SkillCommandCog — /skill slash command (skills from ~/.claude/skills/)
+    from .cogs.session_manage import SessionManageCog
     from .cogs.skill_command import SkillCommandCog
     from .database.settings_repo import SettingsRepository
-    from .cogs.session_manage import SessionManageCog
 
     channel_id_int = int(config["channel_id"])
 
@@ -225,6 +247,7 @@ async def main() -> None:
     listing_cog = None
     if os.getenv("SHUPPIN_ENABLED", "").strip() in ("1", "true", "yes"):
         from .cogs.listing_command import ListingCommandCog
+
         listing_cog = ListingCommandCog(bot)
         logger.info("ListingCommandCog enabled (SHUPPIN_ENABLED=1)")
     else:
@@ -263,9 +286,7 @@ async def main() -> None:
     # Claude Code（claude -p）課金対策（2026-06-15〜）:
     # フリーチャット(ClaudeChatCog)と /skill(SkillCommandCog) は claude -p を呼ぶため
     # 従量課金対象。デフォルト無効。再開する場合のみ .env で 1/true/yes を設定。
-    claude_chat_enabled = os.getenv("CLAUDE_CHAT_ENABLED", "").strip() in (
-        "1", "true", "yes"
-    )
+    claude_chat_enabled = os.getenv("CLAUDE_CHAT_ENABLED", "").strip() in ("1", "true", "yes")
     skill_enabled = os.getenv("SKILL_ENABLED", "").strip() in ("1", "true", "yes")
     if claude_chat_enabled:
         logger.info("ClaudeChatCog enabled (CLAUDE_CHAT_ENABLED=1) — claude -p 課金対象")
