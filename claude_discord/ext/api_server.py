@@ -96,6 +96,7 @@ class ApiServer:
     def _setup_routes(self) -> None:
         self.app.router.add_get("/api/health", self.health)
         self.app.router.add_post("/api/notify", self.notify)
+        self.app.router.add_post("/api/dm", self.send_dm)
         self.app.router.add_post("/api/schedule", self.schedule)
         self.app.router.add_get("/api/scheduled", self.list_scheduled)
         self.app.router.add_delete("/api/scheduled/{id}", self.cancel_scheduled)
@@ -214,6 +215,74 @@ class ApiServer:
         await raw_channel.send(embed=embed)  # type: ignore[union-attr]
 
         return web.json_response({"status": "sent"})
+
+    async def send_dm(self, request: web.Request) -> web.Response:
+        """POST /api/dm — send a direct message to a guild member.
+
+        Body: {"user_id": "...", "message": "..."} or
+              {"query": "表示名の一部", "message": "...", "dry_run": true}
+        - query resolution uses Guild.query_members (non-empty query works
+          without the privileged members intent). Bots are excluded.
+        - dry_run (or an ambiguous query) returns candidates without sending,
+          so callers can confirm the recipient before a real send.
+        """
+        import discord
+
+        try:
+            data = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+
+        user_id = data.get("user_id")
+        query = data.get("query")
+        message = data.get("message")
+        dry_run = bool(data.get("dry_run"))
+
+        candidates: list = []
+        if user_id:
+            try:
+                candidates = [await self.bot.fetch_user(int(user_id))]
+            except Exception as e:
+                return web.json_response({"error": f"user not found: {e}"}, status=404)
+        elif query:
+            seen: set[int] = set()
+            for guild in self.bot.guilds:
+                try:
+                    members = await guild.query_members(query=str(query), limit=10)
+                except Exception:
+                    members = []
+                for m in members:
+                    if not m.bot and m.id not in seen:
+                        seen.add(m.id)
+                        candidates.append(m)
+        else:
+            return web.json_response(
+                {"error": "user_id or query is required"}, status=400)
+
+        if not candidates:
+            return web.json_response({"error": "no matching user"}, status=404)
+
+        cand_info = [{
+            "id": str(u.id),
+            "name": str(u),
+            "display_name": getattr(u, "display_name", str(u)),
+        } for u in candidates]
+
+        if dry_run or len(candidates) > 1:
+            # Never guess between multiple matches — make the caller pick by id.
+            return web.json_response({"sent": False, "candidates": cand_info})
+
+        if not message:
+            return web.json_response({"error": "message is required"}, status=400)
+
+        target = candidates[0]
+        try:
+            await target.send(str(message))
+        except discord.Forbidden:
+            return web.json_response(
+                {"error": "DM forbidden (recipient's privacy settings)",
+                 "candidates": cand_info}, status=403)
+        return web.json_response({"status": "sent", "to": cand_info[0]})
 
     async def schedule(self, request: web.Request) -> web.Response:
         """POST /api/schedule — schedule a notification for later."""
