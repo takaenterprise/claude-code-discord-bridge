@@ -97,6 +97,7 @@ class ApiServer:
         self.app.router.add_get("/api/health", self.health)
         self.app.router.add_post("/api/notify", self.notify)
         self.app.router.add_post("/api/dm", self.send_dm)
+        self.app.router.add_get("/api/dm/{user_id}/messages", self.get_dm_messages)
         self.app.router.add_post("/api/schedule", self.schedule)
         self.app.router.add_get("/api/scheduled", self.list_scheduled)
         self.app.router.add_delete("/api/scheduled/{id}", self.cancel_scheduled)
@@ -285,6 +286,37 @@ class ApiServer:
                      "candidates": cand_info}, status=403)
             raise
         return web.json_response({"status": "sent", "to": cand_info[0]})
+
+    async def get_dm_messages(self, request: web.Request) -> web.Response:
+        """GET /api/dm/{user_id}/messages — read the bot's DM history with a user.
+
+        Lets cron/CLI callers collect replies to bot-sent DMs (the chat cog only
+        watches its configured guild channel, so DM replies are otherwise unseen).
+        """
+        try:
+            user_id = int(request.match_info["user_id"])
+        except (ValueError, KeyError):
+            return web.json_response({"error": "Invalid user ID"}, status=400)
+        try:
+            limit = min(int(request.query.get("limit", "20")), 100)
+        except ValueError:
+            limit = 20
+        try:
+            user = await self.bot.fetch_user(user_id)
+            dm = user.dm_channel or await user.create_dm()
+            messages = []
+            async for m in dm.history(limit=limit):
+                messages.append({
+                    "id": str(m.id),
+                    "author_id": str(m.author.id),
+                    "author_name": str(m.author),
+                    "content": m.content,
+                    "created_at": m.created_at.isoformat(),
+                })
+        except Exception as exc:
+            logger.error("Failed to read DM history: %s", exc, exc_info=True)
+            return web.json_response({"error": str(exc)}, status=500)
+        return web.json_response({"messages": messages})
 
     async def schedule(self, request: web.Request) -> web.Response:
         """POST /api/schedule — schedule a notification for later."""
@@ -758,6 +790,7 @@ class ApiServer:
                 topic=data.get("topic"),
                 create_webhook=bool(data.get("create_webhook", False)),
                 webhook_name=data.get("webhook_name"),
+                guild_id=int(data["guild_id"]) if data.get("guild_id") else None,
             )
         except Exception as exc:
             logger.error("Failed to create channel: %s", exc, exc_info=True)
@@ -774,7 +807,11 @@ class ApiServer:
                 status=503,
             )
 
-        channels = await cog.list_channels()
+        gid = request.query.get("guild_id")
+        try:
+            channels = await cog.list_channels(guild_id=int(gid) if gid else None)
+        except ValueError:
+            return web.json_response({"error": "Invalid guild_id"}, status=400)
         return web.json_response({"channels": channels})
 
     async def update_channel(self, request: web.Request) -> web.Response:
@@ -906,7 +943,11 @@ class ApiServer:
                 status=503,
             )
 
-        categories = await cog.list_categories()
+        gid = request.query.get("guild_id")
+        try:
+            categories = await cog.list_categories(guild_id=int(gid) if gid else None)
+        except ValueError:
+            return web.json_response({"error": "Invalid guild_id"}, status=400)
         return web.json_response({"categories": categories})
 
     # ------------------------------------------------------------------

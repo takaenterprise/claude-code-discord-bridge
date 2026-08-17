@@ -38,8 +38,15 @@ class ChannelManageCog(commands.Cog):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _get_guild(self) -> discord.Guild | None:
-        """Resolve the guild from the bot's configured channel."""
+    def _get_guild(self, guild_id: int | None = None) -> discord.Guild | None:
+        """Resolve the target guild.
+
+        Explicit guild_id wins (multi-guild support — e.g. the HQ server the bot
+        was invited to later); otherwise fall back to the guild of the bot's
+        configured watch channel (original single-guild behavior, unchanged).
+        """
+        if guild_id:
+            return self.bot.get_guild(guild_id)
         channel = self.bot.get_channel(self.bot.channel_id)
         if channel is not None and hasattr(channel, "guild"):
             return channel.guild  # type: ignore[union-attr]
@@ -80,15 +87,16 @@ class ChannelManageCog(commands.Cog):
         topic: str | None = None,
         create_webhook: bool = False,
         webhook_name: str | None = None,
+        guild_id: int | None = None,
     ) -> dict:
         """Create a text channel with optional category and webhook.
 
         Returns a dict with channel_id, channel_name, and optionally webhook_url.
         Raises ValueError or discord.Forbidden on failure.
         """
-        guild = self._get_guild()
+        guild = self._get_guild(guild_id)
         if guild is None:
-            raise ValueError("Could not resolve guild from bot's configured channel")
+            raise ValueError("Could not resolve guild (bad guild_id or unconfigured channel)")
 
         # Resolve or create category
         cat = await self._find_or_create_category(guild, category)
@@ -123,9 +131,9 @@ class ChannelManageCog(commands.Cog):
 
         return result
 
-    async def list_channels(self) -> list[dict]:
+    async def list_channels(self, guild_id: int | None = None) -> list[dict]:
         """List all text channels in the guild."""
-        guild = self._get_guild()
+        guild = self._get_guild(guild_id)
         if guild is None:
             return []
 
@@ -230,9 +238,9 @@ class ChannelManageCog(commands.Cog):
             for wh in webhooks
         ]
 
-    async def list_categories(self) -> list[dict]:
+    async def list_categories(self, guild_id: int | None = None) -> list[dict]:
         """List all categories in the guild."""
-        guild = self._get_guild()
+        guild = self._get_guild(guild_id)
         if guild is None:
             return []
 
