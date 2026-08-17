@@ -226,8 +226,6 @@ class ApiServer:
         - dry_run (or an ambiguous query) returns candidates without sending,
           so callers can confirm the recipient before a real send.
         """
-        import discord
-
         try:
             data = await request.json()
         except json.JSONDecodeError:
@@ -278,10 +276,14 @@ class ApiServer:
         target = candidates[0]
         try:
             await target.send(str(message))
-        except discord.Forbidden:
-            return web.json_response(
-                {"error": "DM forbidden (recipient's privacy settings)",
-                 "candidates": cand_info}, status=403)
+        except Exception as e:
+            # discord.Forbidden — kept name-based so this module stays importable
+            # (and testable) without the discord package at runtime.
+            if type(e).__name__ == "Forbidden":
+                return web.json_response(
+                    {"error": "DM forbidden (recipient's privacy settings)",
+                     "candidates": cand_info}, status=403)
+            raise
         return web.json_response({"status": "sent", "to": cand_info[0]})
 
     async def schedule(self, request: web.Request) -> web.Response:
