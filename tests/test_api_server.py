@@ -486,3 +486,38 @@ class TestSendDm:
         assert len(data["candidates"]) == 2
         for m in members:
             m.send.assert_not_awaited()
+
+
+class TestDmMessages:
+    @pytest.mark.asyncio
+    async def test_dm_history_read(self, client: TestClient, bot: MagicMock) -> None:
+        from datetime import datetime, timezone
+
+        msg = MagicMock()
+        msg.id = 999
+        msg.content = "返信です"
+        msg.created_at = datetime(2026, 8, 18, 5, 0, tzinfo=timezone.utc)
+        msg.author = MagicMock()
+        msg.author.id = 42
+        msg.author.__str__ = MagicMock(return_value="sk.my")
+
+        async def _history(limit=20):
+            yield msg
+
+        dm = MagicMock()
+        dm.history = _history
+        user = MagicMock()
+        user.dm_channel = dm
+        bot.fetch_user = AsyncMock(return_value=user)
+
+        resp = await client.get("/api/dm/42/messages?limit=5")
+        assert resp.status == 200
+        data = await resp.json()
+        assert len(data["messages"]) == 1
+        assert data["messages"][0]["content"] == "返信です"
+        assert data["messages"][0]["author_id"] == "42"
+
+    @pytest.mark.asyncio
+    async def test_dm_history_invalid_user_id(self, client: TestClient) -> None:
+        resp = await client.get("/api/dm/abc/messages")
+        assert resp.status == 400
