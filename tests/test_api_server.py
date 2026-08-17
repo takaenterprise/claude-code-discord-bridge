@@ -440,3 +440,49 @@ class TestMarkResume:
             headers={"Content-Type": "application/json"},
         )
         assert resp.status == 400
+
+
+class TestSendDm:
+    @pytest.mark.asyncio
+    async def test_dm_requires_target(self, client: TestClient) -> None:
+        resp = await client.post("/api/dm", json={"message": "hi"})
+        assert resp.status == 400
+
+    @pytest.mark.asyncio
+    async def test_dm_by_user_id_sends(self, client: TestClient, bot: MagicMock) -> None:
+        user = MagicMock()
+        user.id = 42
+        user.display_name = "雅也"
+        user.__str__ = MagicMock(return_value="masaya#0001")
+        user.send = AsyncMock()
+        bot.fetch_user = AsyncMock(return_value=user)
+        resp = await client.post("/api/dm", json={"user_id": "42", "message": "hello"})
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["status"] == "sent"
+        assert data["to"]["id"] == "42"
+        user.send.assert_awaited_once_with("hello")
+
+    @pytest.mark.asyncio
+    async def test_dm_ambiguous_query_returns_candidates_without_sending(
+        self, client: TestClient, bot: MagicMock
+    ) -> None:
+        members = []
+        for i, name in ((1, "雅也"), (2, "雅也じゃない方")):
+            m = MagicMock()
+            m.id = i
+            m.bot = False
+            m.display_name = name
+            m.__str__ = MagicMock(return_value=f"user{i}")
+            m.send = AsyncMock()
+            members.append(m)
+        guild = MagicMock()
+        guild.query_members = AsyncMock(return_value=members)
+        bot.guilds = [guild]
+        resp = await client.post("/api/dm", json={"query": "雅也", "message": "x"})
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["sent"] is False
+        assert len(data["candidates"]) == 2
+        for m in members:
+            m.send.assert_not_awaited()
