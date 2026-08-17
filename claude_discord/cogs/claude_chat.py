@@ -214,11 +214,15 @@ class ClaudeChatCog(commands.Cog):
             return
 
         # Check if message is in a thread under the configured channel
-        if (
-            isinstance(message.channel, discord.Thread)
-            and message.channel.parent_id == self.bot.channel_id
-        ):
-            await self._handle_thread_reply(message)
+        if isinstance(message.channel, discord.Thread):
+            if message.channel.parent_id == self.bot.channel_id:
+                await self._handle_thread_reply(message)
+                return
+            # spawn APIで監視ch外に作られたセッションスレッドも継続する。
+            # sessions.dbに記録がある=このbot自身のセッションの時だけ発火するため、
+            # 無関係なスレッドや他botのセッションでclaudeが起動することはない。
+            if await self.repo.get(message.channel.id) is not None:
+                await self._handle_thread_reply(message)
 
     @app_commands.command(name="stop", description="Stop the active session (session is preserved)")
     async def stop_session(self, interaction: discord.Interaction) -> None:
