@@ -155,8 +155,9 @@ class ChannelManageCog(commands.Cog):
         *,
         name: str | None = None,
         topic: str | None = None,
+        category: str | None = None,
     ) -> dict:
-        """Update a channel's name and/or topic."""
+        """Update a channel's name, topic, and/or category (moves the channel)."""
         channel = self.bot.get_channel(channel_id)
         if channel is None:
             channel = await self.bot.fetch_channel(channel_id)
@@ -169,6 +170,10 @@ class ChannelManageCog(commands.Cog):
             kwargs["name"] = name
         if topic is not None:
             kwargs["topic"] = topic
+        if category is not None:
+            kwargs["category"] = await self._find_or_create_category(
+                channel.guild, category
+            )
 
         if kwargs:
             await channel.edit(**kwargs)
