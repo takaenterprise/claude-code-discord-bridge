@@ -136,3 +136,23 @@ class TestItemLine:
         item = json.loads('{"row":2,"approval_id":"1","jan":"4901234567890",'
                           '"costco_id":"45791","name":"商品","old_cost":100,"new_cost":200}')
         assert "4901234567890" in m.item_line(item)
+
+
+class TestExecuteFlagPassedThrough:
+    """★approve/undo は --execute を必ず渡す。
+
+    EC側スクリプトは --execute が無いと1セルも書かない（承認ラインのゲート）。
+    Botが渡し忘れると、ボタンを押しても静かに何も起きない。
+    """
+
+    def _captured_args(self, source: str, marker: str) -> list[str]:
+        block = source.split(marker, 1)[1].split(")", 1)[0]
+        return [t.strip().strip('"') for t in block.split(",")]
+
+    def test_approve_and_undo_both_pass_execute(self):
+        from pathlib import Path
+        src = Path(m.__file__).read_text(encoding="utf-8")
+        for sub in ('run_apply("approve"', 'run_apply("undo"'):
+            assert sub in src
+            tail = src.split(sub, 1)[1].split("\n\n", 1)[0]
+            assert '"--execute"' in tail, f"{sub} に --execute が無い"

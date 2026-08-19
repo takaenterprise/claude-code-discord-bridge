@@ -146,7 +146,7 @@ class UndoView(discord.ui.View):
             return
         await interaction.response.defer()
         res = await run_apply("undo", "--row", str(self._row), "--jan", self._jan,
-                              "--by", str(interaction.user.id))
+                              "--by", str(interaction.user.id), "--execute")
         for child in self.children:
             if isinstance(child, discord.ui.Button):
                 child.disabled = True
@@ -177,8 +177,10 @@ class ApproveView(discord.ui.View):
                            reason, interaction.user.id, self._row)
             return
         await interaction.response.defer()
+        # ★--execute は hooks/guardrail.sh L6-b7 のゲート対象。シェル直叩き（AI含む）は
+        # permitが無いと止まるが、Botはフックを通らないのでここで明示的に渡す
         res = await run_apply("approve", "--row", str(self._row), "--jan", self._jan,
-                              "--by", str(interaction.user.id))
+                              "--by", str(interaction.user.id), "--execute")
         for child in self.children:
             if isinstance(child, discord.ui.Button):
                 child.disabled = True
