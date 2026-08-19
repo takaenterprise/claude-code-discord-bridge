@@ -838,6 +838,7 @@ class ApiServer:
                 channel_id,
                 name=data.get("name"),
                 topic=data.get("topic"),
+                category=data.get("category"),
             )
         except Exception as exc:
             logger.error("Failed to update channel: %s", exc, exc_info=True)
