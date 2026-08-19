@@ -185,12 +185,9 @@ class ClaudeChatCog(commands.Cog):
         # (claude -p / 課金) が起動して「Unknown command」を返すだけで終わる。
         # 先頭が "/" かつ最初の語が登録済みコマンド名なら、セッションを起こさず
         # スラッシュUIの使い方を案内して終了する（課金ゼロ＋自己解決を促す）。
-        in_scope = (
-            message.channel.id == self.bot.channel_id
-            or (
-                isinstance(message.channel, discord.Thread)
-                and message.channel.parent_id == self.bot.channel_id
-            )
+        in_scope = message.channel.id == self.bot.channel_id or (
+            isinstance(message.channel, discord.Thread)
+            and message.channel.parent_id == self.bot.channel_id
         )
         stripped = (message.content or "").lstrip()
         if in_scope and len(stripped) > 1 and stripped.startswith("/"):
@@ -287,6 +284,7 @@ class ClaudeChatCog(commands.Cog):
         prompt: str,
         thread_name: str | None = None,
         session_id: str | None = None,
+        image_urls: list[str] | None = None,
     ) -> discord.Thread:
         """Create a new thread and start a Claude Code session without a user message.
 
@@ -305,6 +303,11 @@ class ClaudeChatCog(commands.Cog):
             session_id: Optional Claude session ID to resume via ``--resume``.
                         When supplied the new Claude process continues the
                         previous conversation rather than starting fresh.
+            image_urls: Optional HTTPS image URLs (Discord CDN) forwarded to the
+                        Claude CLI as stream-json url blocks, exactly as
+                        ``_handle_new_conversation`` does for human messages.
+                        Without this, images attached to the triggering message
+                        are silently dropped on the API-initiated path.
 
         Returns:
             The newly created :class:`discord.Thread`.
@@ -319,7 +322,11 @@ class ClaudeChatCog(commands.Cog):
         seed_message = await thread.send(prompt)
         # Run Claude in the background so /api/spawn returns immediately.
         # The caller gets the thread reference without waiting for Claude to finish.
-        asyncio.create_task(self._run_claude(seed_message, thread, prompt, session_id=session_id))
+        asyncio.create_task(
+            self._run_claude(
+                seed_message, thread, prompt, session_id=session_id, image_urls=image_urls
+            )
+        )
         return thread
 
     async def cog_unload(self) -> None:
