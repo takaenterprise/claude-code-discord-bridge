@@ -260,6 +260,13 @@ async def main() -> None:
 
     profit_cog = ProfitCommandCog(bot)
 
+    # CostApprovalCog — /genka-approve (SS-01原価修正の承認ボタン・社長のみ)
+    # 2026-08-19: n8n A1退役でLINE「承認」の受信口が消えて以来、原価承認が手作業に
+    # 戻っていたのを、Discordのボタンで復活させたもの
+    from .cogs.cost_approval import CostApprovalCog
+
+    cost_approval_cog = CostApprovalCog(bot)
+
     # Claude Code（claude -p）課金対策（2026-06-15〜）:
     # フリーチャット(ClaudeChatCog)と /skill(SkillCommandCog) は claude -p を呼ぶため
     # 従量課金対象。デフォルト無効。再開する場合のみ .env で 1/true/yes を設定。
@@ -280,6 +287,7 @@ async def main() -> None:
         if claude_chat_enabled:
             await bot.add_cog(cog)
         await bot.add_cog(repo_viewer_cog)
+        await bot.add_cog(cost_approval_cog)
         await bot.add_cog(channel_manage_cog)
         if skill_enabled:
             await bot.add_cog(skill_cog)
