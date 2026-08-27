@@ -55,6 +55,41 @@ def _lounge_injection_enabled() -> bool:
     )
 
 
+def _recent_threads_enabled() -> bool:
+    """Whether to inject the [RECENT THREADS] cross-thread summary block.
+
+    Default ON (identical to current behaviour). A bot can opt OUT by setting
+    ``RECENT_THREADS_ENABLED`` to a falsey value — same gate style as
+    ``LOUNGE_ENABLED`` — for deployments where cross-thread summaries are
+    noise rather than useful context (e.g. single-purpose bots).
+    """
+    import os
+
+    return os.getenv("RECENT_THREADS_ENABLED", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+def _concurrency_notice_enabled() -> bool:
+    """Whether to register the session and inject the CONCURRENCY NOTICE block.
+
+    Default ON (identical to current behaviour). A bot can opt OUT by setting
+    ``CONCURRENCY_NOTICE_ENABLED`` to a falsey value — same gate style as
+    ``LOUNGE_ENABLED``.
+    """
+    import os
+
+    return os.getenv("CONCURRENCY_NOTICE_ENABLED", "true").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
 def _make_error_embed(error: str) -> discord.Embed:
     """Return a timeout_embed for timeout errors, error_embed otherwise."""
     m = _TIMEOUT_PATTERN.match(error)
@@ -101,17 +136,30 @@ async def _build_system_context(config: RunConfig) -> str | None:
         logger.debug("Lounge injection disabled via LOUNGE_ENABLED — skipping")
 
     # Layer 1 + 2: Register session and build concurrency notice.
+    # NOTE: config.registry.register()/unregister() are always run when a
+    # registry is present — session_manage.py's `/session list` reads
+    # bot.session_registry.list_active() for unrelated active-session
+    # bookkeeping, so that side effect must not depend on the notice flag.
+    # CONCURRENCY_NOTICE_ENABLED (default ON — current behaviour) only gates
+    # whether the notice text is *injected into the prompt*.
     if config.registry is not None:
         config.registry.register(config.thread.id, config.prompt[:100], config.runner.working_dir)
-        others = config.registry.list_others(config.thread.id)
-        notice = config.registry.build_concurrency_notice(config.thread.id)
-        parts.append(notice)
-        logger.info(
-            "Concurrency notice built for thread %d (%d other active session(s), dir=%s)",
-            config.thread.id,
-            len(others),
-            config.runner.working_dir or "(default)",
-        )
+        if _concurrency_notice_enabled():
+            others = config.registry.list_others(config.thread.id)
+            notice = config.registry.build_concurrency_notice(config.thread.id)
+            parts.append(notice)
+            logger.info(
+                "Concurrency notice built for thread %d (%d other active session(s), dir=%s)",
+                config.thread.id,
+                len(others),
+                config.runner.working_dir or "(default)",
+            )
+        else:
+            logger.debug(
+                "Concurrency notice injection disabled via CONCURRENCY_NOTICE_ENABLED "
+                "— thread %d still registered for bookkeeping",
+                config.thread.id,
+            )
     else:
         logger.debug(
             "No session registry — concurrency notice skipped for thread %d", config.thread.id
@@ -119,7 +167,8 @@ async def _build_system_context(config: RunConfig) -> str | None:
 
     # Layer 4: Cross-thread summaries (what was discussed in recent threads).
     # Only inject for new sessions (no session_id) to avoid bloating resumed sessions.
-    if config.repo is not None and config.session_id is None:
+    # Gated by RECENT_THREADS_ENABLED (default ON — current behaviour).
+    if config.repo is not None and config.session_id is None and _recent_threads_enabled():
         channel_id = getattr(config.thread, "parent_id", None)
         if channel_id is not None:
             try:
@@ -277,7 +326,14 @@ async def run_claude_with_config(config: RunConfig) -> str | None:
                 "Resuming session %s after AskUserQuestion answer",
                 processor.session_id,
             )
-            return await run_claude_with_config(config.with_prompt(answer_prompt))
+            # Carry forward the session_id the just-finished run produced
+            # (processor.session_id), not config.session_id (the id the
+            # run *started* with, which is often None). Otherwise the
+            # resumed run starts a brand-new session with zero context —
+            # the AskUserQuestion "conversation context loss" bug.
+            return await run_claude_with_config(
+                config.with_prompt(answer_prompt, session_id=processor.session_id)
+            )
 
     return processor.session_id
 

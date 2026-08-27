@@ -1157,3 +1157,185 @@ class TestImageOnlyRunConfig:
 
         await run_claude_with_config(config)
         assert runner.image_urls == ["https://example.com/img.png"]
+
+
+class TestAskUserQuestionResumeSessionContinuity:
+    """A1 regression: AskUserQuestion resume must not lose conversation context.
+
+    Before the fix, the recursive resume call at the bottom of
+    run_claude_with_config() did ``config.with_prompt(answer_prompt)``,
+    which kept ``config.session_id`` — the id the run *started* with
+    (often None, for a brand-new session) — instead of the id the run
+    *produced* (``processor.session_id``). The resumed Claude process was
+    therefore started with session_id=None, i.e. a fresh session with zero
+    context, right after the user answered a clarifying question.
+    """
+
+    @pytest.fixture
+    def thread(self) -> MagicMock:
+        t = MagicMock(spec=discord.Thread)
+        t.id = 77777
+        t.send = AsyncMock(return_value=MagicMock(spec=discord.Message))
+        return t
+
+    @pytest.mark.asyncio
+    async def test_resume_uses_session_id_produced_by_first_run(
+        self, thread: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from claude_discord.claude.types import AskOption, AskQuestion
+
+        calls: list[tuple[str, str | None]] = []
+
+        async def gen(prompt, session_id=None, **kwargs):
+            calls.append((prompt, session_id))
+            if session_id is None:
+                # First call: brand-new session. Claude creates "sess-new"
+                # then asks a clarifying question mid-turn (interrupting).
+                yield StreamEvent(message_type=MessageType.SYSTEM, session_id="sess-new")
+                yield StreamEvent(
+                    message_type=MessageType.ASSISTANT,
+                    ask_questions=[
+                        AskQuestion(question="Which?", options=[AskOption(label="A")])
+                    ],
+                )
+                # Stream ends here (runner was interrupted) — no RESULT event.
+            else:
+                # Resumed call — completes normally, same session.
+                yield StreamEvent(message_type=MessageType.SYSTEM, session_id=session_id)
+                yield StreamEvent(
+                    message_type=MessageType.RESULT,
+                    is_complete=True,
+                    session_id=session_id,
+                    cost_usd=0.01,
+                    duration_ms=100,
+                )
+
+        runner = MagicMock()
+        runner.working_dir = None
+        runner.interrupt = AsyncMock()
+        runner.run = gen
+
+        async def fake_collect_ask_answers(*args, **kwargs):
+            return "user answered: A"
+
+        monkeypatch.setattr(
+            "claude_discord.cogs._run_helper.collect_ask_answers",
+            fake_collect_ask_answers,
+        )
+
+        config = RunConfig(thread=thread, runner=runner, prompt="ask me something")
+
+        result = await run_claude_with_config(config)
+
+        assert len(calls) == 2, "Expected exactly two runner.run() calls (initial + resume)"
+        assert calls[0] == ("ask me something", None)
+        # The resumed call must carry the session_id the FIRST run produced
+        # ("sess-new"), NOT the id the run started with (None).
+        assert calls[1] == ("user answered: A", "sess-new")
+        assert result == "sess-new"
+
+
+class TestInjectionFlags:
+    """A4 regression: RECENT_THREADS_ENABLED / CONCURRENCY_NOTICE_ENABLED gates.
+
+    Both default to ON (identical to pre-A4 behaviour) and can be switched
+    off per-bot via env var, matching the existing LOUNGE_ENABLED gate style.
+    """
+
+    @pytest.fixture
+    def thread(self) -> MagicMock:
+        t = MagicMock(spec=discord.Thread)
+        t.id = 33333
+        t.parent_id = 88888
+        t.send = AsyncMock(return_value=MagicMock(spec=discord.Message))
+        return t
+
+    @pytest.fixture
+    def runner(self) -> MagicMock:
+        r = MagicMock()
+        r.working_dir = "/home/user/repo"
+        r.append_system_prompt = None
+        return r
+
+    def _make_repo_with_recent_summaries(self) -> MagicMock:
+        repo = MagicMock()
+        summary = MagicMock()
+        summary.summary = "did something interesting"
+        summary.last_used_at = "2026-08-27 09:00"
+        repo.get_recent_summaries = AsyncMock(return_value=[summary])
+        return repo
+
+    @pytest.mark.asyncio
+    async def test_recent_threads_injected_by_default(
+        self, thread: MagicMock, runner: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Default (env unset) behaviour is unchanged: RECENT THREADS block appears."""
+        from claude_discord.cogs._run_helper import _build_system_context
+
+        monkeypatch.delenv("RECENT_THREADS_ENABLED", raising=False)
+        repo = self._make_repo_with_recent_summaries()
+        config = RunConfig(thread=thread, runner=runner, prompt="hi", repo=repo, session_id=None)
+
+        context = await _build_system_context(config)
+
+        assert context is not None
+        assert "[RECENT THREADS" in context
+        assert "did something interesting" in context
+
+    @pytest.mark.asyncio
+    async def test_recent_threads_block_disappears_when_disabled(
+        self, thread: MagicMock, runner: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """RECENT_THREADS_ENABLED=false removes the [RECENT THREADS] block entirely."""
+        from claude_discord.cogs._run_helper import _build_system_context
+
+        monkeypatch.setenv("RECENT_THREADS_ENABLED", "false")
+        repo = self._make_repo_with_recent_summaries()
+        config = RunConfig(thread=thread, runner=runner, prompt="hi", repo=repo, session_id=None)
+
+        context = await _build_system_context(config)
+
+        assert context is None or "[RECENT THREADS" not in context
+        # The repo must not even be queried once the flag is off.
+        repo.get_recent_summaries.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_concurrency_notice_injected_by_default(
+        self, thread: MagicMock, runner: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Default (env unset) behaviour is unchanged: CONCURRENCY NOTICE block appears."""
+        from claude_discord.cogs._run_helper import _build_system_context
+        from claude_discord.concurrency import SessionRegistry
+
+        monkeypatch.delenv("CONCURRENCY_NOTICE_ENABLED", raising=False)
+        registry = SessionRegistry()
+        config = RunConfig(thread=thread, runner=runner, prompt="hi", registry=registry)
+
+        context = await _build_system_context(config)
+
+        assert context is not None
+        assert "[CONCURRENCY NOTICE" in context
+
+    @pytest.mark.asyncio
+    async def test_concurrency_notice_block_disappears_when_disabled(
+        self, thread: MagicMock, runner: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """CONCURRENCY_NOTICE_ENABLED=false removes the notice text from the prompt.
+
+        The session is still registered in the SessionRegistry for unrelated
+        bookkeeping (e.g. /session list via bot.session_registry.list_active()) —
+        only the *prompt injection* is gated.
+        """
+        from claude_discord.cogs._run_helper import _build_system_context
+        from claude_discord.concurrency import SessionRegistry
+
+        monkeypatch.setenv("CONCURRENCY_NOTICE_ENABLED", "false")
+        registry = SessionRegistry()
+        config = RunConfig(thread=thread, runner=runner, prompt="hi", registry=registry)
+
+        context = await _build_system_context(config)
+
+        assert context is None or "[CONCURRENCY NOTICE" not in context
+        # Bookkeeping side effect must be preserved even with the flag off.
+        assert len(registry.list_active()) == 1
+        assert registry.list_active()[0].thread_id == thread.id
