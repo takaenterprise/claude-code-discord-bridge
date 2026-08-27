@@ -60,6 +60,7 @@ def _make_interaction(
     interaction = MagicMock(spec=discord.Interaction)
     interaction.user = MagicMock()
     interaction.user.id = user_id
+    interaction.user.display_name = "tester"
     interaction.response = MagicMock()
     interaction.response.send_message = AsyncMock()
     interaction.response.is_done = MagicMock(return_value=False)
@@ -96,7 +97,7 @@ class TestParseSkillMeta:
             "---\nname: my-skill\ndescription: A cool skill\n---\n\nBody here."
         )
         result = _parse_skill_meta(skill_dir)
-        assert result == {"name": "my-skill", "description": "A cool skill"}
+        assert result == {"name": "my-skill", "description": "A cool skill", "args_hint": ""}
 
     def test_name_defaults_to_dir_name(self, tmp_path: Path) -> None:
         skill_dir = tmp_path / "fallback-name"
@@ -321,10 +322,13 @@ class TestNewThreadMode:
         cog = _make_cog(skills=[{"name": "todoist", "description": "Tasks"}])
         interaction = _make_interaction()
 
-        # Set up the channel returned by bot.get_channel
+        # Set up the channel returned by bot.get_channel.
+        # New-thread mode posts a starter message then creates the thread on it.
         mock_channel = MagicMock(spec=discord.TextChannel)
         mock_thread = _make_thread()
-        mock_channel.create_thread = AsyncMock(return_value=mock_thread)
+        mock_starter = MagicMock()
+        mock_starter.create_thread = AsyncMock(return_value=mock_thread)
+        mock_channel.send = AsyncMock(return_value=mock_starter)
         cog.bot.get_channel = MagicMock(return_value=mock_channel)
 
         with patch(
@@ -333,11 +337,12 @@ class TestNewThreadMode:
             await cog.run_skill.callback(cog, interaction, name="todoist", args=None)
             mock_run.assert_called_once()
             call_kwargs = mock_run.call_args[0][0]  # RunConfig object
-            assert call_kwargs.prompt == "/todoist"
+            assert call_kwargs.prompt == "/todoist\n\n[実行者: tester]"
             assert call_kwargs.session_id is None
 
-        # Thread was created
-        mock_channel.create_thread.assert_called_once()
+        # Starter message posted, thread created on it
+        mock_channel.send.assert_called_once()
+        mock_starter.create_thread.assert_called_once()
         # Followup sent
         interaction.followup.send.assert_called_once()
         assert "/todoist" in interaction.followup.send.call_args.args[0]
@@ -349,7 +354,9 @@ class TestNewThreadMode:
 
         mock_channel = MagicMock(spec=discord.TextChannel)
         mock_thread = _make_thread()
-        mock_channel.create_thread = AsyncMock(return_value=mock_thread)
+        mock_starter = MagicMock()
+        mock_starter.create_thread = AsyncMock(return_value=mock_thread)
+        mock_channel.send = AsyncMock(return_value=mock_starter)
         cog.bot.get_channel = MagicMock(return_value=mock_channel)
 
         with patch(
@@ -357,7 +364,7 @@ class TestNewThreadMode:
         ) as mock_run:
             await cog.run_skill.callback(cog, interaction, name="todoist", args='filter "today"')
             call_kwargs = mock_run.call_args[0][0]  # RunConfig object
-            assert call_kwargs.prompt == '/todoist filter "today"'
+            assert call_kwargs.prompt == '/todoist filter "today"\n\n[実行者: tester]'
 
     @pytest.mark.asyncio
     async def test_thread_name_includes_args(self) -> None:
@@ -366,14 +373,16 @@ class TestNewThreadMode:
 
         mock_channel = MagicMock(spec=discord.TextChannel)
         mock_thread = _make_thread()
-        mock_channel.create_thread = AsyncMock(return_value=mock_thread)
+        mock_starter = MagicMock()
+        mock_starter.create_thread = AsyncMock(return_value=mock_thread)
+        mock_channel.send = AsyncMock(return_value=mock_starter)
         cog.bot.get_channel = MagicMock(return_value=mock_channel)
 
         with patch(
             "claude_discord.cogs.skill_command.run_claude_with_config", new_callable=AsyncMock
         ):
             await cog.run_skill.callback(cog, interaction, name="todoist", args="search work")
-        call_kwargs = mock_channel.create_thread.call_args.kwargs
+        call_kwargs = mock_starter.create_thread.call_args.kwargs
         assert call_kwargs["name"] == "/todoist search work"
 
     @pytest.mark.asyncio
@@ -411,7 +420,7 @@ class TestInThreadMode:
             await cog.run_skill.callback(cog, interaction, name="recall", args=None)
             call_kwargs = mock_run.call_args[0][0]  # RunConfig object
             assert call_kwargs.session_id == "abc-123"
-            assert call_kwargs.prompt == "/recall"
+            assert call_kwargs.prompt == "/recall\n\n[実行者: tester]"
             assert call_kwargs.thread is thread
 
     @pytest.mark.asyncio
@@ -439,15 +448,17 @@ class TestInThreadMode:
 
         mock_channel = MagicMock(spec=discord.TextChannel)
         new_thread = _make_thread()
-        mock_channel.create_thread = AsyncMock(return_value=new_thread)
+        mock_starter = MagicMock()
+        mock_starter.create_thread = AsyncMock(return_value=new_thread)
+        mock_channel.send = AsyncMock(return_value=mock_starter)
         cog.bot.get_channel = MagicMock(return_value=mock_channel)
 
         with patch(
             "claude_discord.cogs.skill_command.run_claude_with_config", new_callable=AsyncMock
         ) as mock_run:
             await cog.run_skill.callback(cog, interaction, name="test", args=None)
-            # Should have created a new thread, not used the existing one
-            mock_channel.create_thread.assert_called_once()
+            # Should have created a new thread (via starter message), not used the existing one
+            mock_starter.create_thread.assert_called_once()
             call_kwargs = mock_run.call_args[0][0]  # RunConfig object
             assert call_kwargs.session_id is None
 
@@ -464,7 +475,7 @@ class TestInThreadMode:
         ) as mock_run:
             await cog.run_skill.callback(cog, interaction, name="todoist", args="filter today")
             call_kwargs = mock_run.call_args[0][0]  # RunConfig object
-            assert call_kwargs.prompt == "/todoist filter today"
+            assert call_kwargs.prompt == "/todoist filter today\n\n[実行者: tester]"
 
 
 # ---------------------------------------------------------------------------
