@@ -24,8 +24,11 @@ MAX_ATTACHMENT_BYTES = 50_000  # 50 KB per file
 MAX_IMAGE_BYTES = 5_000_000  # 5 MB per image
 MAX_IMAGE_DIMENSION = 7999  # Claude API rejects images >= 8000px on any side
 MAX_TOTAL_BYTES = 100_000  # 100 KB across all text attachments
-MAX_ATTACHMENTS = 5
-MAX_IMAGES = 4  # Claude supports up to 4 images per prompt
+# コストコ現場の1件は「棚札のポップ＋バーコード」で必ず2枚セットになり、原材料表示の
+# 表裏も撮る（2026-08-19 社長）。4枚では足りないため8枚へ。添付総数の上限も画像8枚が
+# 入るよう引き上げる（MAX_ATTACHMENTSが小さいままだと先頭5件しか走査されず頭打ちになる）。
+MAX_ATTACHMENTS = 10
+MAX_IMAGES = 8
 
 
 async def build_prompt_and_images(message: discord.Message) -> tuple[str, list[str]]:

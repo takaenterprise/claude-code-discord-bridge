@@ -255,17 +255,19 @@ class ApiServer:
                         seen.add(m.id)
                         candidates.append(m)
         else:
-            return web.json_response(
-                {"error": "user_id or query is required"}, status=400)
+            return web.json_response({"error": "user_id or query is required"}, status=400)
 
         if not candidates:
             return web.json_response({"error": "no matching user"}, status=404)
 
-        cand_info = [{
-            "id": str(u.id),
-            "name": str(u),
-            "display_name": getattr(u, "display_name", str(u)),
-        } for u in candidates]
+        cand_info = [
+            {
+                "id": str(u.id),
+                "name": str(u),
+                "display_name": getattr(u, "display_name", str(u)),
+            }
+            for u in candidates
+        ]
 
         if dry_run or len(candidates) > 1:
             # Never guess between multiple matches — make the caller pick by id.
@@ -282,8 +284,12 @@ class ApiServer:
             # (and testable) without the discord package at runtime.
             if type(e).__name__ == "Forbidden":
                 return web.json_response(
-                    {"error": "DM forbidden (recipient's privacy settings)",
-                     "candidates": cand_info}, status=403)
+                    {
+                        "error": "DM forbidden (recipient's privacy settings)",
+                        "candidates": cand_info,
+                    },
+                    status=403,
+                )
             raise
         return web.json_response({"status": "sent", "to": cand_info[0]})
 
@@ -306,13 +312,15 @@ class ApiServer:
             dm = user.dm_channel or await user.create_dm()
             messages = []
             async for m in dm.history(limit=limit):
-                messages.append({
-                    "id": str(m.id),
-                    "author_id": str(m.author.id),
-                    "author_name": str(m.author),
-                    "content": m.content,
-                    "created_at": m.created_at.isoformat(),
-                })
+                messages.append(
+                    {
+                        "id": str(m.id),
+                        "author_id": str(m.author.id),
+                        "author_name": str(m.author),
+                        "content": m.content,
+                        "created_at": m.created_at.isoformat(),
+                    }
+                )
         except Exception as exc:
             logger.error("Failed to read DM history: %s", exc, exc_info=True)
             return web.json_response({"error": str(exc)}, status=500)
@@ -582,6 +590,9 @@ class ApiServer:
                 ``default_channel_id`` configured at startup).
             thread_name: Custom thread title (optional; defaults to the
                 first 100 characters of *prompt*).
+            image_urls: Optional list of HTTPS image URLs (max 8) forwarded to
+                the Claude CLI as stream-json url blocks.  Non-HTTPS entries are
+                rejected so that callers cannot smuggle local file paths in.
 
         Returns (201):
             ``{"status": "spawned", "thread_id": "...", "thread_name": "..."}``
@@ -631,8 +642,20 @@ class ApiServer:
 
         thread_name: str | None = data.get("thread_name") or None
 
+        raw_images = data.get("image_urls") or []
+        if not isinstance(raw_images, list):
+            return web.json_response({"error": "image_urls must be a list"}, status=400)
+        image_urls = [u for u in raw_images if isinstance(u, str) and u.startswith("https://")][:8]
+        if len(image_urls) != len(raw_images):
+            logger.warning(
+                "spawn: dropped %d non-https/excess image entries",
+                len(raw_images) - len(image_urls),
+            )
+
         try:
-            thread = await cog.spawn_session(raw, prompt, thread_name=thread_name)
+            thread = await cog.spawn_session(
+                raw, prompt, thread_name=thread_name, image_urls=image_urls or None
+            )
         except Exception as exc:
             logger.error("spawn_session failed: %s", exc, exc_info=True)
             return web.json_response({"error": str(exc)}, status=500)
@@ -838,6 +861,7 @@ class ApiServer:
                 channel_id,
                 name=data.get("name"),
                 topic=data.get("topic"),
+                category=data.get("category"),
             )
         except Exception as exc:
             logger.error("Failed to update channel: %s", exc, exc_info=True)
@@ -1010,8 +1034,7 @@ class ApiServer:
                     "timestamp": msg.created_at.isoformat(),
                     "author": author_data,
                     "attachments": [
-                        {"filename": a.filename, "url": a.url}
-                        for a in msg.attachments
+                        {"filename": a.filename, "url": a.url} for a in msg.attachments
                     ],
                 }
                 if msg.thread:
@@ -1021,7 +1044,9 @@ class ApiServer:
                     }
                 messages.append(msg_data)
         except _discord.Forbidden:
-            return web.json_response({"error": "Bot lacks permission to read this channel"}, status=403)
+            return web.json_response(
+                {"error": "Bot lacks permission to read this channel"}, status=403
+            )
         except Exception as exc:
             logger.error("Failed to fetch messages: %s", exc, exc_info=True)
             return web.json_response({"error": str(exc)}, status=500)
@@ -1065,26 +1090,34 @@ class ApiServer:
             guild = channel.guild
             for thread in guild.threads:
                 if thread.parent_id == channel_id:
-                    threads_list.append({
-                        "id": str(thread.id),
-                        "name": thread.name,
-                        "archived": thread.archived,
-                        "message_count": thread.message_count,
-                        "created_at": thread.created_at.isoformat() if thread.created_at else None,
-                    })
+                    threads_list.append(
+                        {
+                            "id": str(thread.id),
+                            "name": thread.name,
+                            "archived": thread.archived,
+                            "message_count": thread.message_count,
+                            "created_at": thread.created_at.isoformat()
+                            if thread.created_at
+                            else None,
+                        }
+                    )
 
             # Archived threads
             if include_archived:
                 async for thread in channel.archived_threads(limit=50):
                     # Skip if already added from active
                     if not any(t["id"] == str(thread.id) for t in threads_list):
-                        threads_list.append({
-                            "id": str(thread.id),
-                            "name": thread.name,
-                            "archived": thread.archived,
-                            "message_count": thread.message_count,
-                            "created_at": thread.created_at.isoformat() if thread.created_at else None,
-                        })
+                        threads_list.append(
+                            {
+                                "id": str(thread.id),
+                                "name": thread.name,
+                                "archived": thread.archived,
+                                "message_count": thread.message_count,
+                                "created_at": thread.created_at.isoformat()
+                                if thread.created_at
+                                else None,
+                            }
+                        )
         except _discord.Forbidden:
             return web.json_response({"error": "Bot lacks permission"}, status=403)
         except Exception as exc:
@@ -1476,15 +1509,17 @@ class ApiServer:
         else:
             summary = await self.usage_repo.get_daily_summary()  # type: ignore[union-attr]
 
-        return web.json_response({
-            "summary": {
-                "total_sessions": summary.total_sessions,
-                "total_cost_usd": round(summary.total_cost_usd, 4),
-                "total_input_tokens": summary.total_input_tokens,
-                "total_output_tokens": summary.total_output_tokens,
-                "total_duration_ms": summary.total_duration_ms,
+        return web.json_response(
+            {
+                "summary": {
+                    "total_sessions": summary.total_sessions,
+                    "total_cost_usd": round(summary.total_cost_usd, 4),
+                    "total_input_tokens": summary.total_input_tokens,
+                    "total_output_tokens": summary.total_output_tokens,
+                    "total_duration_ms": summary.total_duration_ms,
+                }
             }
-        })
+        )
 
     async def get_usage_users(self, request: web.Request) -> web.Response:
         """GET /api/usage/users — per-user usage breakdown.
@@ -1501,20 +1536,22 @@ class ApiServer:
 
         users = await self.usage_repo.get_user_summaries(date=date, year_month=month)  # type: ignore[union-attr]
 
-        return web.json_response({
-            "users": [
-                {
-                    "discord_user_id": u.discord_user_id,
-                    "discord_username": u.discord_username,
-                    "total_sessions": u.total_sessions,
-                    "total_cost_usd": round(u.total_cost_usd, 4),
-                    "total_input_tokens": u.total_input_tokens,
-                    "total_output_tokens": u.total_output_tokens,
-                    "total_duration_ms": u.total_duration_ms,
-                }
-                for u in users
-            ]
-        })
+        return web.json_response(
+            {
+                "users": [
+                    {
+                        "discord_user_id": u.discord_user_id,
+                        "discord_username": u.discord_username,
+                        "total_sessions": u.total_sessions,
+                        "total_cost_usd": round(u.total_cost_usd, 4),
+                        "total_input_tokens": u.total_input_tokens,
+                        "total_output_tokens": u.total_output_tokens,
+                        "total_duration_ms": u.total_duration_ms,
+                    }
+                    for u in users
+                ]
+            }
+        )
 
     async def get_usage_daily(self, request: web.Request) -> web.Response:
         """GET /api/usage/daily — daily cost breakdown for a month.
@@ -1547,23 +1584,25 @@ class ApiServer:
 
         records = await self.usage_repo.get_recent(limit=limit)  # type: ignore[union-attr]
 
-        return web.json_response({
-            "records": [
-                {
-                    "id": r.id,
-                    "thread_id": r.thread_id,
-                    "session_id": r.session_id,
-                    "discord_user_id": r.discord_user_id,
-                    "discord_username": r.discord_username,
-                    "bot_name": r.bot_name,
-                    "model": r.model,
-                    "cost_usd": round(r.cost_usd, 4) if r.cost_usd else None,
-                    "input_tokens": r.input_tokens,
-                    "output_tokens": r.output_tokens,
-                    "duration_ms": r.duration_ms,
-                    "prompt_summary": r.prompt_summary,
-                    "created_at": r.created_at,
-                }
-                for r in records
-            ]
-        })
+        return web.json_response(
+            {
+                "records": [
+                    {
+                        "id": r.id,
+                        "thread_id": r.thread_id,
+                        "session_id": r.session_id,
+                        "discord_user_id": r.discord_user_id,
+                        "discord_username": r.discord_username,
+                        "bot_name": r.bot_name,
+                        "model": r.model,
+                        "cost_usd": round(r.cost_usd, 4) if r.cost_usd else None,
+                        "input_tokens": r.input_tokens,
+                        "output_tokens": r.output_tokens,
+                        "duration_ms": r.duration_ms,
+                        "prompt_summary": r.prompt_summary,
+                        "created_at": r.created_at,
+                    }
+                    for r in records
+                ]
+            }
+        )
