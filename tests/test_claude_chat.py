@@ -448,6 +448,50 @@ class TestSpawnSession:
         user_msg_arg = mock_run.call_args.args[0]
         assert user_msg_arg is seed_msg
 
+    @pytest.mark.asyncio
+    async def test_spawn_splits_prompt_over_2000_chars(self) -> None:
+        """spawn_session's prompt is API-supplied and not pre-truncated like
+        interactive user messages are. A prompt over Discord's 2000-char
+        limit sent as a single thread.send() call raises HTTP 400 -- as
+        observed 4 times on 2026-08-25, leaving a thread with no context.
+        It must be split (fence-aware, chunker's default 1950 chars) and
+        sent as multiple messages, with the seed message (used by
+        StatusManager for reactions) being the first chunk.
+        """
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        import discord
+
+        thread = MagicMock(spec=discord.Thread)
+        sent_messages: list[str] = []
+
+        async def _send(content: str, **kwargs: object) -> MagicMock:
+            sent_messages.append(content)
+            return MagicMock(spec=discord.Message)
+
+        thread.send = AsyncMock(side_effect=_send)
+
+        channel = MagicMock()
+        channel.create_thread = AsyncMock(return_value=thread)
+
+        bot = MagicMock()
+        cog = ClaudeChatCog(bot=bot, repo=MagicMock(), runner=MagicMock())
+
+        long_prompt = "line of instructions\n" * 200  # ~4400 chars
+
+        mock_run = AsyncMock()
+        with patch.object(cog, "_run_claude", new=mock_run):
+            await cog.spawn_session(channel, long_prompt)
+
+        assert len(sent_messages) >= 2, "expected the prompt to be split into multiple messages"
+        for chunk in sent_messages:
+            assert len(chunk) <= 2000, "each chunk must respect Discord's 2000-char limit"
+
+        # The seed message handed to _run_claude corresponds to the first chunk sent.
+        assert thread.send.call_args_list[0].args[0] == sent_messages[0]
+        user_msg_arg = mock_run.call_args.args[0]
+        assert user_msg_arg is not None
+
 
 class TestOnReady:
     """Tests for ClaudeChatCog.on_ready — startup session resume logic."""

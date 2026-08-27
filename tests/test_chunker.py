@@ -5,6 +5,7 @@ from claude_discord.discord_ui.chunker import (
     _is_table_line,
     _wrap_tables_in_fences,
     chunk_message,
+    split_chunk,
 )
 
 TABLE_3ROW = "| A | B |\n|---|---|\n| 1 | 2 |\n| 3 | 4 |"
@@ -150,6 +151,71 @@ class TestTableChunking:
             if "| val |" in chunk or "| Col |" in chunk:
                 fence_count = chunk.count("```")
                 assert fence_count % 2 == 0, f"Chunk {i} has unbalanced fences: {chunk[:120]!r}"
+
+
+class TestSplitChunk:
+    """split_chunk() cuts one chunk off the front of a growing buffer.
+
+    Used by StreamingMessageManager to cap its buffer incrementally without
+    re-wrapping tables on every call (unlike chunk_message()).
+    """
+
+    def test_short_text_returned_whole(self):
+        chunk, remaining = split_chunk("Hello world", max_chars=100)
+        assert chunk == "Hello world"
+        assert remaining == ""
+
+    def test_exact_limit_returned_whole(self):
+        text = "A" * 100
+        chunk, remaining = split_chunk(text, max_chars=100)
+        assert chunk == text
+        assert remaining == ""
+
+    def test_hard_split_no_boundary(self):
+        text = "A" * 500
+        chunk, remaining = split_chunk(text, max_chars=200)
+        assert len(chunk) == 200
+        assert chunk + remaining == text
+
+    def test_splits_at_newline(self):
+        text = "A" * 190 + "\n" + "B" * 190
+        chunk, remaining = split_chunk(text, max_chars=200)
+        assert chunk == "A" * 190
+        assert remaining == "B" * 190
+
+    def test_does_not_wrap_tables(self):
+        """Unlike chunk_message(), split_chunk() must not fence-wrap tables --
+        a growing streaming buffer would otherwise get re-wrapped on every
+        call while the table is still arriving.
+        """
+        text = "| A | B |\n" * 300  # long enough to force a split
+        chunk, remaining = split_chunk(text, max_chars=200)
+        assert "```" not in chunk
+        assert "```" not in remaining
+
+    def test_closes_and_reopens_open_fence(self):
+        text = "```python\n" + ("x = 1\n" * 100) + "```\nAfter."
+        chunk, remaining = split_chunk(text, max_chars=200)
+        assert chunk.count("```") % 2 == 0
+        assert chunk.endswith("```")
+        assert remaining.startswith("```python\n")
+
+    def test_no_split_needed_no_fence_reopen(self):
+        text = "```python\ncode()\n```"
+        chunk, remaining = split_chunk(text, max_chars=200)
+        assert chunk == text
+        assert remaining == ""
+
+    def test_reassembly_preserves_content(self):
+        """chunk + remaining (minus the reopened fence marker and the
+        whitespace normalized at the seam) covers exactly the original
+        code content -- nothing is dropped or duplicated.
+        """
+        text = "```js\n" + ("y = 2\n" * 150) + "```\nDone."
+        chunk, remaining = split_chunk(text, max_chars=300)
+        assert remaining.startswith("```js\n")
+        rest = remaining[len("```js\n") :]
+        assert chunk.count("y = 2") + rest.count("y = 2") == 150
 
 
 class TestCloseOpenFence:

@@ -205,8 +205,15 @@ class EventProcessor:
         if event.text:
             await self._handle_text(event)
 
-        # Tool use — post embed and start live timer.
-        if event.tool_use:
+        # Tool use — post embed and start live timer. Guarded by `not is_partial`
+        # for the same reason as thinking/redacted-thinking above: with
+        # --include-partial-messages, the same tool_use block is repeated across
+        # several partial ASSISTANT events before the final complete one, so an
+        # unguarded call fires _handle_tool_use per partial — posting duplicate
+        # tool embeds, and (via its partial_text="" reset) corrupting the next
+        # text delta calculation in _handle_text into re-sending the full
+        # accumulated text instead of just the new delta.
+        if event.tool_use and not event.is_partial:
             await self._handle_tool_use(event)
 
         # TodoWrite — post or edit the live todo progress embed.

@@ -122,6 +122,36 @@ def _ensure_newline(parts: list[str]) -> None:
         parts.append("\n")
 
 
+def split_chunk(text: str, max_chars: int = EFFECTIVE_MAX) -> tuple[str, str]:
+    """Split one Discord-safe chunk off the front of *text*.
+
+    Unlike :func:`chunk_message`, this does not wrap GFM tables in fences —
+    it is meant for callers (e.g. ``StreamingMessageManager``) that cut a
+    single chunk off a *growing* buffer incrementally and would otherwise
+    re-wrap the same partially-arrived table on every call.
+
+    Returns ``(chunk, remaining)`` where *chunk* is at most *max_chars* and,
+    if the split fell inside an open code fence, is closed with a trailing
+    fence marker; *remaining* is re-prefixed with a matching reopened fence
+    so the fence stays balanced across the split (mirrors the loop body of
+    :func:`chunk_message`).
+
+    If *text* already fits within *max_chars*, returns ``(text, "")``.
+    """
+    if len(text) <= max_chars:
+        return text, ""
+
+    split_at = _find_split_point(text, max_chars)
+    chunk = text[:split_at].rstrip()
+    remaining = text[split_at:].lstrip("\n")
+
+    chunk, fence_lang = _close_open_fence(chunk)
+    if fence_lang is not None:
+        remaining = f"```{fence_lang}\n{remaining}"
+
+    return chunk, remaining
+
+
 def _find_split_point(text: str, max_chars: int) -> int:
     """Find the best position to split the text.
 
