@@ -590,7 +590,7 @@ class ApiServer:
                 ``default_channel_id`` configured at startup).
             thread_name: Custom thread title (optional; defaults to the
                 first 100 characters of *prompt*).
-            image_urls: Optional list of HTTPS image URLs (max 4) forwarded to
+            image_urls: Optional list of HTTPS image URLs (max 8) forwarded to
                 the Claude CLI as stream-json url blocks.  Non-HTTPS entries are
                 rejected so that callers cannot smuggle local file paths in.
 
@@ -645,7 +645,7 @@ class ApiServer:
         raw_images = data.get("image_urls") or []
         if not isinstance(raw_images, list):
             return web.json_response({"error": "image_urls must be a list"}, status=400)
-        image_urls = [u for u in raw_images if isinstance(u, str) and u.startswith("https://")][:4]
+        image_urls = [u for u in raw_images if isinstance(u, str) and u.startswith("https://")][:8]
         if len(image_urls) != len(raw_images):
             logger.warning(
                 "spawn: dropped %d non-https/excess image entries",

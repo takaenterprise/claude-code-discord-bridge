@@ -53,7 +53,8 @@ def _parse_skill_meta(skill_dir: Path) -> dict[str, str] | None:
         fields = dict(_FIELD_RE.findall(m.group("body")))
         name = fields.get("name", skill_dir.name).strip()
         description = fields.get("description", "").strip()
-        return {"name": name, "description": description}
+        args_hint = fields.get("args_hint", "").strip().strip('"').strip("'")
+        return {"name": name, "description": description, "args_hint": args_hint}
     except OSError:
         logger.warning("Failed to read %s", skill_md)
         return None
@@ -148,7 +149,11 @@ class SkillCommandCog(commands.Cog):
         choices = []
         for s in matches[:25]:
             label = s["name"]
-            if s["description"]:
+            # args_hintがあれば引数例を優先表示、なければ説明文
+            hint = s.get("args_hint", "")
+            if hint:
+                label = f"{s['name']} — 例: {hint}"
+            elif s["description"]:
                 short_desc = s["description"][:60]
                 if len(s["description"]) > 60:
                     short_desc += "…"
@@ -210,9 +215,12 @@ class SkillCommandCog(commands.Cog):
             return
 
         # Build the prompt: /name [args]
+        # Discordユーザー名を自動注入（スキル内で$DISCORD_USERとして参照可能）
+        discord_user = interaction.user.display_name
         prompt = f"/{name}"
         if args:
             prompt = f"/{name} {args}"
+        prompt += f"\n\n[実行者: {discord_user}]"
 
         await interaction.response.defer()
 
@@ -247,14 +255,14 @@ class SkillCommandCog(commands.Cog):
             await interaction.followup.send("Claude channel not found.", ephemeral=True)
             return
 
-        thread_name = f"/{name} {args}" if args else f"/{name}"
-        # Discord thread names are max 100 chars
-        thread = await channel.create_thread(
-            name=thread_name[:100],
-            type=discord.ChannelType.public_thread,
-        )
-
         display = f"`/{name} {args}`" if args else f"`/{name}`"
+        thread_name = f"/{name} {args}" if args else f"/{name}"
+
+        # スターターメッセージに紐づけてスレッドを作成
+        # channel.create_thread() だとスレッドパネルにしか出ないため
+        starter = await channel.send(f"⚡ {display}")
+        thread = await starter.create_thread(name=thread_name[:100])
+
         await interaction.followup.send(f"Running {display} → {thread.mention}")
 
         runner = self.runner.clone()

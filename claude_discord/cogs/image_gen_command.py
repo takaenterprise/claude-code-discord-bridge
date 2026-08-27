@@ -690,6 +690,77 @@ class ImageGenCommandCog(commands.Cog):
         await interaction.response.send_message(embed=embed)
 
     # ─────────────────────────────────────────────
+    # /gazou — サムネイル+LP画像一括生成
+    # ─────────────────────────────────────────────
+
+    @app_commands.command(
+        name="gazou",
+        description="サムネイル+LP画像一括生成（複数JAN・両店舗・SFTP込み）",
+    )
+    @app_commands.describe(
+        jans="JANコード（スペース区切り、13桁・複数指定可）",
+        shop="対象店舗（指定しない場合は両方）",
+    )
+    @app_commands.choices(
+        shop=[
+            app_commands.Choice(name="両方（mofu→fdmart）", value="both"),
+            app_commands.Choice(name="mofu のみ", value="mofu"),
+            app_commands.Choice(name="fdmart のみ", value="fdmart"),
+        ]
+    )
+    async def gazou_command(
+        self,
+        interaction: discord.Interaction,
+        jans: str,
+        shop: app_commands.Choice[str] | None = None,
+    ) -> None:
+        jan_list = _parse_jans(jans)
+        if not jan_list:
+            await interaction.response.send_message(
+                "JANを13桁で指定してください。例: `4589980062377 4589980062384`",
+                ephemeral=True,
+            )
+            return
+
+        cmd_parts = ["bash", f"{REPO_ROOT}/scripts/gazou_batch.sh"]
+        if shop:
+            cmd_parts.extend(["--shop", shop.value])
+        cmd_parts.extend(jan_list)
+
+        try:
+            pid = await _spawn_detached(*cmd_parts)
+        except Exception as e:
+            logger.exception("画像一括生成バッチ起動失敗")
+            embed = discord.Embed(
+                title="画像一括生成バッチ起動失敗",
+                description=f"```\n{e}\n```",
+                color=COLOR_ERROR,
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        shop_label = shop.name if shop else "両方"
+        embed = discord.Embed(
+            title="画像一括生成（サムネ+LP）起動",
+            description=(
+                f"対象JAN: **{len(jan_list)}件**\n"
+                f"店舗: {shop_label}\n"
+                f"処理: サムネイル → LP（順次実行）\n"
+                f"処理時間目安: 約{len(jan_list) * 15}分\n"
+                f"進捗は <#1496390706304909332> で通知されます\n"
+                f"PID: `{pid}`"
+            ),
+            color=COLOR_STARTED,
+        )
+        embed.add_field(
+            name="JAN一覧",
+            value="\n".join(f"・ `{j}`" for j in jan_list[:20])
+            + (f"\n…他{len(jan_list)-20}件" if len(jan_list) > 20 else ""),
+            inline=False,
+        )
+        await interaction.response.send_message(embed=embed)
+
+    # ─────────────────────────────────────────────
     # /sp_dimensions — SP-API パッケージ寸法補完
     # ─────────────────────────────────────────────
 
