@@ -96,6 +96,12 @@ class EventProcessor:
         # (skip events) then handle the ask after the stream ends.
         self._pending_ask: list[AskQuestion] | None = None
 
+        # Final RESULT event text (the CLI's authoritative "result" field),
+        # captured in _on_complete(). None on error or an empty result — used
+        # by the bot-memo bridge (記憶橋) to record what Claude actually
+        # answered, independent of what was already streamed to Discord.
+        self._result_text: str | None = None
+
     # ------------------------------------------------------------------
     # Public properties
     # ------------------------------------------------------------------
@@ -119,6 +125,16 @@ class EventProcessor:
     def assistant_text_sent(self) -> bool:
         """True if assistant text was already streamed to Discord."""
         return self._assistant_text_sent
+
+    @property
+    def result_text(self) -> str | None:
+        """Final RESULT event text, or None on error / empty result.
+
+        Set once, in _on_complete(), from the CLI's `result` field — this is
+        the authoritative final answer regardless of what was already
+        streamed to Discord via ASSISTANT events.
+        """
+        return self._result_text
 
     # ------------------------------------------------------------------
     # Public methods
@@ -286,6 +302,7 @@ class EventProcessor:
         else:
             # Post final result text only if no assistant text was already sent.
             response_text = event.text
+            self._result_text = response_text or None
             if response_text and not self._assistant_text_sent:
                 for chunk in chunk_message(response_text):
                     await self._config.thread.send(chunk)
