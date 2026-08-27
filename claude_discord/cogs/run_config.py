@@ -78,8 +78,20 @@ class RunConfig:
         if not self.prompt and not self.image_urls:
             raise ValueError("RunConfig.prompt must not be empty")
 
-    def with_prompt(self, prompt: str) -> RunConfig:
-        """Return a new RunConfig with a different prompt (immutable copy)."""
+    def with_prompt(self, prompt: str, session_id: str | None = None) -> RunConfig:
+        """Return a new RunConfig with a different prompt (immutable copy).
+
+        All other fields (including session_id) are carried over from self
+        unchanged, unless ``session_id`` is given explicitly — in which case
+        it replaces the copy's session_id. This is used to resume with the
+        session_id that a just-finished run produced (e.g. after an
+        AskUserQuestion round-trip), rather than silently falling back to
+        the session_id the caller started with (which is often None for a
+        brand-new session, causing a fresh session with zero context to be
+        started instead of a resume).
+        """
         from dataclasses import replace
 
+        if session_id is not None:
+            return replace(self, prompt=prompt, session_id=session_id)
         return replace(self, prompt=prompt)

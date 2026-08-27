@@ -19,6 +19,9 @@ from .database.ask_repo import PendingAskRepository
 from .database.lounge_repo import LoungeRepository
 from .database.models import init_db
 from .database.repository import SessionRepository
+from .database.resume_repo import PendingResumeRepository
+from .database.settings_repo import SettingsRepository
+from .database.usage_repo import UsageRepository
 from .utils.logger import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -53,6 +56,10 @@ def load_config() -> dict[str, str]:
         "allowed_skills": os.getenv("ALLOWED_SKILLS", ""),
         "coordination_channel_id": os.getenv("COORDINATION_CHANNEL_ID", ""),
         "append_system_prompt": os.getenv("APPEND_SYSTEM_PROMPT", ""),
+        # A5: comma-separated Claude tool allowlist (e.g. "Read,Grep,Bash").
+        # Unset (default) => None => ClaudeRunner passes no --allowedTools,
+        # identical to current behaviour.
+        "claude_allowed_tools": os.getenv("CLAUDE_ALLOWED_TOOLS", ""),
     }
 
 
@@ -66,6 +73,14 @@ def create_runner(config: dict[str, str]) -> BaseRunner:
     backend = config.get("runner_backend", "claude")
 
     if backend == "claude":
+        # A5: CLAUDE_ALLOWED_TOOLS unset => allowed_tools_str == "" => None,
+        # i.e. ClaudeRunner behaves exactly as before (no --allowedTools).
+        allowed_tools_str = config.get("claude_allowed_tools", "")
+        allowed_tools = (
+            [t.strip() for t in allowed_tools_str.split(",") if t.strip()]
+            if allowed_tools_str
+            else None
+        )
         return ClaudeRunner(
             command=config["claude_command"],
             model=config["claude_model"],
@@ -73,6 +88,7 @@ def create_runner(config: dict[str, str]) -> BaseRunner:
             working_dir=config["claude_working_dir"] or None,
             timeout_seconds=int(config["timeout"]),
             append_system_prompt=config["append_system_prompt"] or None,
+            allowed_tools=allowed_tools,
         )
 
     raise ValueError(
@@ -82,14 +98,63 @@ def create_runner(config: dict[str, str]) -> BaseRunner:
     )
 
 
+def _resolve_data_dir() -> Path:
+    """Resolve the data directory for session/task/notification DBs (A3).
+
+    ``CCDB_DATA_DIR`` unset (default) => ``Path("data")``, identical to the
+    previous hardcoded behaviour. Setting it lets multiple bot instances
+    (e.g. bot1/bot2 sharing one host) keep separate session ledgers.
+    Extracted to a standalone function so it is testable without running
+    the full bot startup.
+    """
+    return Path(os.getenv("CCDB_DATA_DIR") or "data")
+
+
+def _build_claude_chat_cog(
+    bot: ClaudeDiscordBot,
+    repo: SessionRepository,
+    runner: ClaudeRunner,
+    max_concurrent: int,
+    allowed_user_ids: set[int] | None,
+    ask_repo: PendingAskRepository,
+    lounge_repo: LoungeRepository,
+    resume_repo: PendingResumeRepository,
+    settings_repo: SettingsRepository,
+    usage_repo: UsageRepository,
+) -> ClaudeChatCog:
+    """Build ClaudeChatCog with the full repo set (A2).
+
+    setup_bridge()-based consumers already get resume_repo/settings_repo/
+    usage_repo wired in (see setup.py's ``setup_bridge()``). The direct
+    main.py launch path used to omit them, which left restart-resume
+    (claude_chat.py ``ClaudeChatCog.cog_unload``/``on_ready``) silently
+    disabled, ``/model`` global overrides ignored, and usage tracking off —
+    all with no error, since every one of these repos is optional (``None``
+    is a valid, quietly-degraded value). Extracted to a standalone function
+    so the wiring is testable without needing a running Discord bot.
+    """
+    return ClaudeChatCog(
+        bot=bot,
+        repo=repo,
+        runner=runner,
+        max_concurrent=max_concurrent,
+        allowed_user_ids=allowed_user_ids,
+        ask_repo=ask_repo,
+        lounge_repo=lounge_repo,
+        resume_repo=resume_repo,
+        settings_repo=settings_repo,
+        usage_repo=usage_repo,
+    )
+
+
 async def main() -> None:
     """Start the bot."""
     setup_logging()
     config = load_config()
 
     # Initialize database
-    data_dir = Path("data")
-    data_dir.mkdir(exist_ok=True)
+    data_dir = _resolve_data_dir()
+    data_dir.mkdir(parents=True, exist_ok=True)
     db_path = str(data_dir / "sessions.db")
     await init_db(db_path)
 
@@ -97,6 +162,14 @@ async def main() -> None:
     repo = SessionRepository(db_path)
     ask_repo = PendingAskRepository(db_path)
     lounge_repo = LoungeRepository(db_path)
+    # A2: wire the same repos setup_bridge()/setup_bridge()-based consumers get,
+    # so the direct main.py launch path also supports restart-resume
+    # (claude_chat.py ClaudeChatCog.cog_unload/on_ready), dynamic model
+    # settings, and usage tracking instead of silently no-op'ing on None.
+    resume_repo = PendingResumeRepository(db_path)
+    settings_repo = SettingsRepository(db_path)
+    usage_repo = UsageRepository(db_path)
+    await usage_repo.ensure_schema()
     runner = create_runner(config)
 
     owner_id = int(config["owner_id"]) if config["owner_id"] else None
@@ -134,7 +207,7 @@ async def main() -> None:
         allowed_skills = None  # 全スキル許可
 
     # Register cog
-    cog = ClaudeChatCog(
+    cog = _build_claude_chat_cog(
         bot=bot,
         repo=repo,
         runner=runner,
@@ -142,6 +215,9 @@ async def main() -> None:
         allowed_user_ids=allowed_user_ids,
         ask_repo=ask_repo,
         lounge_repo=lounge_repo,
+        resume_repo=resume_repo,
+        settings_repo=settings_repo,
+        usage_repo=usage_repo,
     )
 
     # RepoViewerCog — /recent slash command
@@ -151,7 +227,6 @@ async def main() -> None:
 
     # SkillCommandCog — /skill slash command (skills from ~/.claude/skills/)
     from .cogs.skill_command import SkillCommandCog
-    from .database.settings_repo import SettingsRepository
     from .cogs.session_manage import SessionManageCog
 
     channel_id_int = int(config["channel_id"])
@@ -165,7 +240,7 @@ async def main() -> None:
         allowed_skills=allowed_skills,
     )
 
-    settings_repo = SettingsRepository(db_path)
+    # settings_repo already created above (shared with ClaudeChatCog — A2).
     session_manage_cog = SessionManageCog(
         bot,
         repo=repo,
