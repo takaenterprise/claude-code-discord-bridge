@@ -105,6 +105,61 @@ def _truncate_result(content: str) -> str:
     return content[:TOOL_RESULT_MAX_CHARS] + "\n... (truncated)"
 
 
+def _write_bot_memo(config: RunConfig, processor: EventProcessor) -> None:
+    """Append this turn's Q&A to TakaBrain via the bot-memo bridge (記憶橋 v1).
+
+    No-op unless the ``BOT_MEMO_DIR`` env var is set — this is the single
+    on/off switch for the whole feature, so an unset var means zero behaviour
+    change from before this feature existed. Also skips turns with no final
+    result text (errors, a drained AskUserQuestion round, etc.) since there
+    is nothing meaningful to record.
+
+    Never raises — a memo failure must not affect the bot's normal reply
+    flow, so all work here (including bot_memo's own internal try/except) is
+    wrapped defensively and only logged at WARNING on failure.
+    """
+    import os
+
+    memo_dir = os.getenv("BOT_MEMO_DIR")
+    if not memo_dir:
+        return
+
+    result_text = processor.result_text
+    if not result_text:
+        return
+
+    try:
+        from datetime import datetime
+
+        from ..ext.bot_memo import append_memo, build_memo_entry
+
+        bot_name = os.getenv("BOT_NAME") or "bot"
+        thread_name = getattr(config.thread, "name", "") or ""
+        now = datetime.now()
+
+        entry = build_memo_entry(
+            bot_name=bot_name,
+            thread_id=config.thread.id,
+            thread_name=thread_name,
+            prompt=config.prompt or "",
+            result_text=result_text,
+            session_id=processor.session_id,
+            now=now,
+        )
+        append_memo(
+            memo_dir=memo_dir,
+            bot_name=bot_name,
+            thread_id=config.thread.id,
+            thread_name=thread_name,
+            entry=entry,
+            now=now,
+        )
+    except Exception:
+        logger.warning(
+            "Bot-memo bridge failed for thread %d — skipping", config.thread.id, exc_info=True
+        )
+
+
 async def _build_system_context(config: RunConfig) -> str | None:
     """Build ephemeral system context from AI Lounge and concurrency notice.
 
@@ -334,6 +389,9 @@ async def run_claude_with_config(config: RunConfig) -> str | None:
             return await run_claude_with_config(
                 config.with_prompt(answer_prompt, session_id=processor.session_id)
             )
+
+    # 記憶橋 v1 — bot会話をTakaBrainへ自動記帳 (BOT_MEMO_DIR未設定なら完全OFF)。
+    _write_bot_memo(config, processor)
 
     return processor.session_id
 
