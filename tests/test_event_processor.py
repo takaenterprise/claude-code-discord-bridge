@@ -34,7 +34,7 @@ def _make_config(thread: MagicMock, runner: MagicMock, **kwargs) -> RunConfig:
     return RunConfig(thread=thread, runner=runner, prompt="test prompt", **kwargs)
 
 
-def _make_tool_event(tool_id: str = "t1") -> StreamEvent:
+def _make_tool_event(tool_id: str = "t1", is_partial: bool = False) -> StreamEvent:
     return StreamEvent(
         message_type=MessageType.ASSISTANT,
         tool_use=ToolUseEvent(
@@ -43,6 +43,7 @@ def _make_tool_event(tool_id: str = "t1") -> StreamEvent:
             tool_input={"command": "echo hi"},
             category=ToolCategory.COMMAND,
         ),
+        is_partial=is_partial,
     )
 
 
@@ -258,6 +259,85 @@ class TestOnToolUse:
         task.cancel()
         with pytest.raises((asyncio.CancelledError, Exception)):
             await task
+
+
+class TestOnToolUsePartial:
+    """Regression: partial tool_use events must not each produce their own
+    embed (unlike thinking/redacted-thinking, tool_use had no `not
+    event.is_partial` guard), and an interleaved partial tool_use must not
+    corrupt the text-streaming delta calculation.
+
+    With --include-partial-messages, the same tool_use block repeats across
+    several partial ASSISTANT events before the final complete one.
+    """
+
+    @pytest.mark.asyncio
+    async def test_partial_tool_use_sends_no_embed(
+        self, thread: MagicMock, runner: MagicMock
+    ) -> None:
+        config = _make_config(thread, runner)
+        p = EventProcessor(config)
+
+        await p.process(_make_tool_event("t1", is_partial=True))
+
+        thread.send.assert_not_called()
+        assert "t1" not in p._state.active_tools
+        assert "t1" not in p._state.active_timers
+
+    @pytest.mark.asyncio
+    async def test_partial_then_complete_tool_use_sends_embed_once(
+        self, thread: MagicMock, runner: MagicMock
+    ) -> None:
+        """Only the final complete event may produce an embed -- repeated
+        partials of the same tool_use must not each post their own.
+        """
+        config = _make_config(thread, runner)
+        p = EventProcessor(config)
+
+        await p.process(_make_tool_event("t1", is_partial=True))
+        await p.process(_make_tool_event("t1", is_partial=True))
+        await p.process(_make_tool_event("t1", is_partial=False))
+
+        embed_sends = [c for c in thread.send.call_args_list if "embed" in c.kwargs]
+        assert len(embed_sends) == 1
+
+    @pytest.mark.asyncio
+    async def test_interleaved_partial_tool_use_does_not_split_streamed_text(
+        self, thread: MagicMock, runner: MagicMock
+    ) -> None:
+        """A partial tool_use arriving mid-text-stream must not force an
+        early streamer finalize + partial_text reset. Previously it did,
+        which made the *next* partial text event recompute its delta against
+        an empty partial_text -- i.e. the FULL text again instead of just
+        the new piece -- splitting what should be one growing message into
+        two separate ones ("Hello" sent alone, then "Hello world" sent
+        again as a second message).
+        """
+        config = _make_config(thread, runner)
+        p = EventProcessor(config)
+
+        await p.process(
+            StreamEvent(message_type=MessageType.ASSISTANT, text="Hello", is_partial=True)
+        )
+        await p.process(_make_tool_event("t1", is_partial=True))
+        await p.process(
+            StreamEvent(message_type=MessageType.ASSISTANT, text="Hello world", is_partial=False)
+        )
+
+        text_sends = [
+            c for c in thread.send.call_args_list if c.args and isinstance(c.args[0], str)
+        ]
+        assert len(text_sends) == 1, (
+            "the interleaved partial tool_use split the stream into two "
+            f"separate messages instead of one growing message: {text_sends}"
+        )
+        assert text_sends[0].args[0] == "Hello"
+
+        # The message must grow to the full final text via edit, not stay
+        # frozen at "Hello" forever.
+        sent_msg = thread.send.return_value
+        assert sent_msg.edit.call_args_list, "expected the message to be edited with the final text"
+        assert sent_msg.edit.call_args_list[-1].kwargs.get("content") == "Hello world"
 
 
 class TestOnToolResult:

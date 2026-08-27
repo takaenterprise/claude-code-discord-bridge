@@ -13,6 +13,8 @@ import time
 
 import discord
 
+from .chunker import split_chunk
+
 logger = logging.getLogger(__name__)
 
 # Streaming message edit interval (seconds). Discord rate limit is 5 edits/5s.
@@ -47,15 +49,7 @@ class StreamingMessageManager:
             return
 
         self._buffer += text
-
-        # If buffer exceeds limit, finalize current message and start new one
-        if len(self._buffer) > STREAM_MAX_CHARS and self._current_message:
-            # 先にオーバーフロー分を退避してからflush（切り捨て防止）
-            overflow = self._buffer[STREAM_MAX_CHARS:]
-            self._buffer = self._buffer[:STREAM_MAX_CHARS]
-            await self._flush()
-            self._current_message = None
-            self._buffer = overflow
+        await self._drain_overflow()
 
         now = time.monotonic()
         if now - self._last_edit_time >= STREAM_EDIT_INTERVAL:
@@ -80,25 +74,57 @@ class StreamingMessageManager:
         if not self._finalized:
             await self._flush()
 
+    async def _drain_overflow(self) -> None:
+        """Keep ``self._buffer`` within STREAM_MAX_CHARS by closing out full messages.
+
+        Runs on every append, regardless of whether ``self._current_message``
+        exists yet. Previously the overflow split only ran when a message had
+        already been created (``and self._current_message``), so a burst of
+        text arriving before the first flush could grow the buffer past 2000
+        chars unnoticed. Once that happened, the next flush's now-removed
+        "> 2000" chunk path would send several fresh messages but never clear
+        the buffer, so the *next* overflow cycle re-derived "first N chars of
+        the whole (stale) buffer" and edited the most recently sent message
+        with it — overwriting the tail message with head content and
+        re-sending already-delivered text forever. Splitting unconditionally
+        here keeps the invariant "buffer holds only the content of the
+        message currently open for editing" true at all times, so a flush
+        never has more than STREAM_MAX_CHARS to send and never needs to
+        touch a message that has already been closed out.
+
+        Each time the buffer overflows, the part that fits (split at a
+        fence-aware boundary via ``chunker.split_chunk``) is flushed and the
+        message is considered closed — no further edits. The leftover text
+        becomes the buffer for the next message, which the next flush opens
+        fresh with ``.send()`` (never re-editing the closed-out message).
+        """
+        while len(self._buffer) > STREAM_MAX_CHARS:
+            chunk, remaining = split_chunk(self._buffer, STREAM_MAX_CHARS)
+            self._buffer = chunk
+            await self._flush()
+            # This message is now full and closed; start a fresh one for the rest.
+            self._current_message = None
+            self._buffer = remaining
+
     async def _flush(self) -> None:
         """Send or edit the current message with buffer contents."""
         if not self._buffer:
             return
 
         display_text = self._buffer
+        if len(display_text) > 2000:
+            # Should be unreachable: _drain_overflow() keeps the buffer within
+            # STREAM_MAX_CHARS (1900) on every append(). This guards against a
+            # caller bypassing that invariant (e.g. direct _buffer assignment)
+            # and hitting Discord's hard 2000-char limit (HTTP 400).
+            logger.warning(
+                "Streaming buffer exceeded 2000 chars unexpectedly (%d); truncating",
+                len(display_text),
+            )
+            display_text = display_text[:2000]
 
         try:
-            if len(display_text) > 2000:
-                # 2000文字超は切り捨てずにchunk分割して複数メッセージ送信
-                from .chunker import chunk_message
-
-                chunks = chunk_message(display_text)
-                for i, chunk_text in enumerate(chunks):
-                    if i == 0 and self._current_message is not None:
-                        await self._current_message.edit(content=chunk_text)
-                    else:
-                        self._current_message = await self._thread.send(chunk_text)
-            elif self._current_message is None:
+            if self._current_message is None:
                 self._current_message = await self._thread.send(display_text)
             else:
                 await self._current_message.edit(content=display_text)

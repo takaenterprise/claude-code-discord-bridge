@@ -30,6 +30,7 @@ from ..database.repository import SessionRepository
 from ..database.resume_repo import PendingResumeRepository
 from ..database.settings_repo import SettingsRepository
 from ..database.usage_repo import UsageRepository
+from ..discord_ui.chunker import chunk_message
 from ..discord_ui.embeds import stopped_embed
 from ..discord_ui.status import StatusManager
 from ..discord_ui.thread_dashboard import ThreadState, ThreadStatusDashboard
@@ -316,7 +317,15 @@ class ClaudeChatCog(commands.Cog):
             auto_archive_duration=60,
         )
         # Post the prompt so StatusManager has a Message to add reactions to.
-        seed_message = await thread.send(prompt)
+        # Discord rejects any single message over 2000 chars (HTTP 400), and
+        # spawn_session's prompt is API-supplied so it isn't pre-truncated like
+        # interactive user messages are. Split it fence-aware at 1950 chars
+        # (chunk_message's default) and send the extra chunks as follow-ups;
+        # the seed message used for status reactions is always the first chunk.
+        chunks = chunk_message(prompt) or [prompt]
+        seed_message = await thread.send(chunks[0])
+        for chunk in chunks[1:]:
+            await thread.send(chunk)
         # Run Claude in the background so /api/spawn returns immediately.
         # The caller gets the thread reference without waiting for Claude to finish.
         asyncio.create_task(self._run_claude(seed_message, thread, prompt, session_id=session_id))
