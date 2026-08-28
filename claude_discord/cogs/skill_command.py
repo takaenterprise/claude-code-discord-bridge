@@ -115,7 +115,8 @@ class SkillCommandCog(commands.Cog):
         filtered = [s for s in all_skills if s["name"] in self._allowed_skills]
         logger.info(
             "Skill filter: %d/%d skills allowed (%s)",
-            len(filtered), len(all_skills),
+            len(filtered),
+            len(all_skills),
             ", ".join(sorted(self._allowed_skills)),
         )
         return filtered
@@ -193,10 +194,7 @@ class SkillCommandCog(commands.Cog):
         if " " in name:
             parts = name.split(None, 1)
             name = parts[0]
-            if args:
-                args = parts[1] + " " + args
-            else:
-                args = parts[1]
+            args = parts[1] + " " + args if args else parts[1]
 
         # Validate skill name — only alphanumeric, hyphens, underscores
         if not re.match(r"^[\w-]+$", name):

@@ -778,6 +778,12 @@ class TestImageOnlyMessage:
         att.content_type = "image/png"
         att.size = 500_000
         att.url = "https://cdn.discordapp.com/attachments/111/222/photo.png"
+        # Explicit dimensions within MAX_IMAGE_DIMENSION — a spec'd MagicMock
+        # left unset would return an auto-generated MagicMock for .width/
+        # .height, which breaks the ">" comparison in build_prompt_and_images
+        # with TypeError instead of exercising the real skip/keep path.
+        att.width = 1024
+        att.height = 768
         att.read = AsyncMock(return_value=b"PNG...")
         msg.attachments = [att]
         return msg

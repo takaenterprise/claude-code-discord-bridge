@@ -21,6 +21,8 @@ def _make_attachment(
     size: int = 100,
     content: bytes = b"hello world",
     url: str = "https://cdn.discordapp.com/attachments/123/456/test.txt",
+    width: int | None = None,
+    height: int | None = None,
 ) -> MagicMock:
     att = MagicMock(spec=discord.Attachment)
     att.filename = filename
@@ -28,6 +30,13 @@ def _make_attachment(
     att.size = size
     att.url = url
     att.read = AsyncMock(return_value=content)
+    # discord.Attachment.width/height are None for non-image attachments and
+    # populated ints for images. build_prompt_and_images() compares these
+    # against MAX_IMAGE_DIMENSION, so a spec'd MagicMock without an explicit
+    # value must not fall back to an auto-generated MagicMock (which breaks
+    # the ">" comparison with TypeError).
+    att.width = width
+    att.height = height
     return att
 
 

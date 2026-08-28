@@ -120,9 +120,19 @@ class UsageRepository:
                     cache_read_tokens, cache_creation_tokens, duration_ms, prompt_summary)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    thread_id, session_id, discord_user_id, discord_username,
-                    bot_name, model, cost_usd, input_tokens, output_tokens,
-                    cache_read_tokens, cache_creation_tokens, duration_ms, prompt_summary,
+                    thread_id,
+                    session_id,
+                    discord_user_id,
+                    discord_username,
+                    bot_name,
+                    model,
+                    cost_usd,
+                    input_tokens,
+                    output_tokens,
+                    cache_read_tokens,
+                    cache_creation_tokens,
+                    duration_ms,
+                    prompt_summary,
                 ),
             )
             await db.commit()
@@ -159,6 +169,11 @@ class UsageRepository:
                 FROM usage_records WHERE date(created_at) = date('now', 'localtime')"""
                 cursor = await db.execute(query)
             row = await cursor.fetchone()
+            if row is None:
+                # COUNT(*)/SUM(...) with no GROUP BY always returns exactly one
+                # row, even over zero matching records — this guards the type
+                # only, it should never actually be hit.
+                return UsageSummary(0, 0.0, 0, 0, 0)
             return UsageSummary(
                 total_sessions=row[0],
                 total_cost_usd=row[1],
@@ -186,9 +201,16 @@ class UsageRepository:
                     COALESCE(SUM(input_tokens), 0) as inp,
                     COALESCE(SUM(output_tokens), 0) as outp,
                     COALESCE(SUM(duration_ms), 0) as dur
-                FROM usage_records WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', 'localtime')"""
+                FROM usage_records
+                WHERE strftime('%Y-%m', created_at)
+                    = strftime('%Y-%m', 'now', 'localtime')"""
                 cursor = await db.execute(query)
             row = await cursor.fetchone()
+            if row is None:
+                # COUNT(*)/SUM(...) with no GROUP BY always returns exactly one
+                # row, even over zero matching records — this guards the type
+                # only, it should never actually be hit.
+                return UsageSummary(0, 0.0, 0, 0, 0)
             return UsageSummary(
                 total_sessions=row[0],
                 total_cost_usd=row[1],
@@ -270,7 +292,10 @@ class UsageRepository:
             return [UsageRecord(**dict(row)) for row in rows]
 
     async def get_daily_breakdown(self, year_month: str | None = None) -> list[dict]:
-        """Get daily cost breakdown for a given month. Returns list of {date, sessions, cost_usd}."""
+        """Get daily cost breakdown for a given month.
+
+        Returns list of {date, sessions, cost_usd}.
+        """
         async with aiosqlite.connect(self.db_path) as db:
             if year_month:
                 query = """SELECT

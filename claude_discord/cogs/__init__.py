@@ -3,11 +3,11 @@
 from .auto_upgrade import AutoUpgradeCog
 from .claude_chat import ClaudeChatCog
 from .event_processor import EventProcessor
+from .kw_trigger import KwTriggerCog
 from .run_config import RunConfig
 from .scheduler import SchedulerCog
 from .session_manage import SessionManageCog
 from .skill_command import SkillCommandCog
-from .kw_trigger import KwTriggerCog
 from .webhook_trigger import WebhookTriggerCog
 
 __all__ = [

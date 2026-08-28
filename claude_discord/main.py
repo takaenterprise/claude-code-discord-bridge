@@ -192,6 +192,13 @@ async def main() -> None:
     usage_repo = UsageRepository(db_path)
     await usage_repo.ensure_schema()
     runner = create_runner(config)
+    # create_runner() returns BaseRunner (the harness-swap abstraction — see
+    # base_runner.py), but every consumer below (_build_claude_chat_cog,
+    # SkillCommandCog, SessionManageCog, and the api_port assignment) is
+    # still ClaudeRunner-specific. Only the "claude" backend exists today,
+    # so this always holds; narrows the type for pyright without changing
+    # behaviour.
+    assert isinstance(runner, ClaudeRunner)
 
     owner_id = int(config["owner_id"]) if config["owner_id"] else None
     coordination_channel_id = (

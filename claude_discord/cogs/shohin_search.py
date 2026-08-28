@@ -42,9 +42,7 @@ class ShohinSearchCog(commands.Cog):
         name="shohin",
         description="商品マスター検索（JAN or 商品名）",
     )
-    @app_commands.describe(
-        query="JANコード or 商品名キーワード（例: ビスカル, 4972468011293）"
-    )
+    @app_commands.describe(query="JANコード or 商品名キーワード（例: ビスカル, 4972468011293）")
     async def shohin_search(
         self,
         interaction: discord.Interaction,
@@ -74,7 +72,8 @@ class ShohinSearchCog(commands.Cog):
                 "python3",
                 SEARCH_SCRIPT,
                 "--json",
-                "--max", "5",
+                "--max",
+                "5",
                 query,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -83,7 +82,7 @@ class ShohinSearchCog(commands.Cog):
                 proc.communicate(),
                 timeout=SEARCH_TIMEOUT,
             )
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError:  # noqa: UP041 — asyncio.TimeoutError != builtins.TimeoutError on Python 3.10
             embed = discord.Embed(
                 title="タイムアウト",
                 description="検索に時間がかかりすぎました。もう一度お試しください。",
@@ -136,7 +135,7 @@ class ShohinSearchCog(commands.Cog):
 
         # 結果を Embed 形式で表示
         embeds = []
-        for i, r in enumerate(results):
+        for r in results:
             name = r.get("name", "不明")
             spec = r.get("spec", "")
             title = f"{name}" + (f"  ({spec})" if spec else "")

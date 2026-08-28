@@ -91,10 +91,8 @@ class CategoryCommandCog(commands.Cog):
                 stderr=asyncio.subprocess.PIPE,
                 cwd="/home/ubuntu/ec-automation-system",
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=TIMEOUT
-            )
-        except asyncio.TimeoutError:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=TIMEOUT)
+        except asyncio.TimeoutError:  # noqa: UP041 — asyncio.TimeoutError != builtins.TimeoutError on Python 3.10
             embed = discord.Embed(
                 title="タイムアウト",
                 description="検索に時間がかかりすぎました。",
@@ -138,5 +136,8 @@ class CategoryCommandCog(commands.Cog):
 
         logger.info(
             "/category-search by %s: keyword=%s, mall=%s, rc=%s",
-            interaction.user.name, keyword, mall, proc.returncode,
+            interaction.user.name,
+            keyword,
+            mall,
+            proc.returncode,
         )

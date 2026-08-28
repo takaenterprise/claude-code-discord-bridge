@@ -102,6 +102,10 @@ class TestOnSystem:
 
     @pytest.mark.asyncio
     async def test_saves_to_repo(self, thread: MagicMock, runner: MagicMock) -> None:
+        """SYSTEM events persist thread<->session plus channel_id/summary
+        (記憶橋v1: da54086) so a memory-bridge lookup can reverse a thread to
+        its parent channel and a short human-readable summary."""
+        thread.parent_id = 777
         repo = MagicMock()
         repo.save = AsyncMock()
         config = _make_config(thread, runner, repo=repo)
@@ -109,7 +113,12 @@ class TestOnSystem:
 
         await p.process(StreamEvent(message_type=MessageType.SYSTEM, session_id="s1"))
 
-        repo.save.assert_called_once_with(thread.id, "s1")
+        repo.save.assert_called_once_with(
+            thread.id,
+            "s1",
+            channel_id=777,
+            summary="test prompt",
+        )
 
     @pytest.mark.asyncio
     async def test_sends_start_embed_for_new_session(
