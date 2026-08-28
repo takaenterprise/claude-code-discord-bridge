@@ -117,13 +117,19 @@ class HaibanCommandCog(commands.Cog):
                     "JANコード・旧原価・新原価を指定してください。", ephemeral=True
                 )
                 return
-            cmd.extend([
-                "price-change",
-                "--jan", jan,
-                "--old-price", str(old_price),
-                "--new-price", str(new_price),
-                "--condition", condition,
-            ])
+            cmd.extend(
+                [
+                    "price-change",
+                    "--jan",
+                    jan,
+                    "--old-price",
+                    str(old_price),
+                    "--new-price",
+                    str(new_price),
+                    "--condition",
+                    condition,
+                ]
+            )
             if note:
                 cmd.extend(["--reason", note])
             title = f"原価変更中... JAN: {jan}"
@@ -141,9 +147,7 @@ class HaibanCommandCog(commands.Cog):
             title = "廃盤在庫チェック中..."
 
         else:
-            await interaction.response.send_message(
-                "不明なアクションです。", ephemeral=True
-            )
+            await interaction.response.send_message("不明なアクションです。", ephemeral=True)
             return
 
         # 進捗表示
@@ -159,10 +163,8 @@ class HaibanCommandCog(commands.Cog):
                 cwd=SCRIPT_CWD,
                 env=_build_subprocess_env(),
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=TIMEOUT
-            )
-        except asyncio.TimeoutError:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=TIMEOUT)
+        except asyncio.TimeoutError:  # noqa: UP041 — asyncio.TimeoutError != builtins.TimeoutError on Python 3.10
             embed = discord.Embed(
                 title="タイムアウト",
                 description="処理に時間がかかりすぎました。",
@@ -221,5 +223,8 @@ class HaibanCommandCog(commands.Cog):
 
         logger.info(
             "/haiban by %s: action=%s, jan=%s, rc=%s",
-            interaction.user.name, action, jan, proc.returncode,
+            interaction.user.name,
+            action,
+            jan,
+            proc.returncode,
         )

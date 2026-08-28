@@ -171,9 +171,7 @@ class ChannelManageCog(commands.Cog):
         if topic is not None:
             kwargs["topic"] = topic
         if category is not None:
-            kwargs["category"] = await self._find_or_create_category(
-                channel.guild, category
-            )
+            kwargs["category"] = await self._find_or_create_category(channel.guild, category)
 
         if kwargs:
             await channel.edit(**kwargs)
@@ -262,7 +260,10 @@ class ChannelManageCog(commands.Cog):
     # Slash commands
     # ------------------------------------------------------------------
 
-    @app_commands.command(name="channel-create", description="テキストチャンネルを作成（Webhook自動発行オプション付き）")
+    @app_commands.command(
+        name="channel-create",
+        description="テキストチャンネルを作成（Webhook自動発行オプション付き）",
+    )
     @app_commands.describe(
         name="チャンネル名",
         category="カテゴリ名（既存or新規作成）",
@@ -294,7 +295,9 @@ class ChannelManageCog(commands.Cog):
                 embed.add_field(name="カテゴリ", value=result["category_name"], inline=True)
             if result.get("webhook_url"):
                 # Webhook URLはephemeralで表示（セキュリティ）
-                embed.add_field(name="Webhook URL", value=f"```\n{result['webhook_url']}\n```", inline=False)
+                embed.add_field(
+                    name="Webhook URL", value=f"```\n{result['webhook_url']}\n```", inline=False
+                )
             await interaction.followup.send(embed=embed, ephemeral=True)
         except discord.Forbidden:
             embed = discord.Embed(
@@ -359,7 +362,9 @@ class ChannelManageCog(commands.Cog):
             )
             embed.add_field(name="チャンネル", value=f"<#{result['channel_id']}>", inline=True)
             embed.add_field(name="Webhook名", value=result.get("webhook_id", ""), inline=True)
-            embed.add_field(name="Webhook URL", value=f"```\n{result['webhook_url']}\n```", inline=False)
+            embed.add_field(
+                name="Webhook URL", value=f"```\n{result['webhook_url']}\n```", inline=False
+            )
             await interaction.followup.send(embed=embed, ephemeral=True)
         except discord.Forbidden:
             embed = discord.Embed(

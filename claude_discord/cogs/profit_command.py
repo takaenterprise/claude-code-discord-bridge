@@ -101,9 +101,7 @@ class ProfitCommandCog(commands.Cog):
             cmd = ["python3", SCRIPT, "sku", sku]
             if shop:
                 cmd.extend(["--shop", shop])
-            title = f"利益率確認中... SKU: {sku}" + (
-                f" / 店舗: {shop}" if shop else " (全店舗)"
-            )
+            title = f"利益率確認中... SKU: {sku}" + (f" / 店舗: {shop}" if shop else " (全店舗)")
         else:
             await interaction.response.send_message(
                 "`sku`（利益率モード）または `master`（マスタ表示モード）のいずれかを指定してください。",
@@ -123,9 +121,7 @@ class ProfitCommandCog(commands.Cog):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=TIMEOUT
-            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=TIMEOUT)
             out = stdout.decode("utf-8", errors="replace")
             err = stderr.decode("utf-8", errors="replace")
 
@@ -151,7 +147,7 @@ class ProfitCommandCog(commands.Cog):
                 )
             await msg.edit(embed=result_embed)
 
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError:  # noqa: UP041 — asyncio.TimeoutError != builtins.TimeoutError on Python 3.10
             await msg.edit(
                 embed=discord.Embed(
                     title="❌ タイムアウト",

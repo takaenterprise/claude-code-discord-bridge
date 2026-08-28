@@ -115,7 +115,8 @@ class SkillCommandCog(commands.Cog):
         filtered = [s for s in all_skills if s["name"] in self._allowed_skills]
         logger.info(
             "Skill filter: %d/%d skills allowed (%s)",
-            len(filtered), len(all_skills),
+            len(filtered),
+            len(all_skills),
             ", ".join(sorted(self._allowed_skills)),
         )
         return filtered

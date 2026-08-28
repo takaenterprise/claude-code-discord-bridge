@@ -120,9 +120,19 @@ class UsageRepository:
                     cache_read_tokens, cache_creation_tokens, duration_ms, prompt_summary)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    thread_id, session_id, discord_user_id, discord_username,
-                    bot_name, model, cost_usd, input_tokens, output_tokens,
-                    cache_read_tokens, cache_creation_tokens, duration_ms, prompt_summary,
+                    thread_id,
+                    session_id,
+                    discord_user_id,
+                    discord_username,
+                    bot_name,
+                    model,
+                    cost_usd,
+                    input_tokens,
+                    output_tokens,
+                    cache_read_tokens,
+                    cache_creation_tokens,
+                    duration_ms,
+                    prompt_summary,
                 ),
             )
             await db.commit()

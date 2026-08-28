@@ -13,10 +13,10 @@ import sys
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 
-if sys.version_info >= (3, 11):
+if sys.version_info >= (3, 11):  # noqa: UP036 — requires-python allows 3.10; keep the guard
     from typing import Self
 else:
-    from typing_extensions import Self
+    from typing_extensions import Self  # noqa: UP035 — Self needs typing_extensions on Python 3.10
 
 from .types import StreamEvent
 

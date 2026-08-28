@@ -24,7 +24,6 @@ import discord
 from ..discord_ui.ask_handler import collect_ask_answers
 from ..discord_ui.embeds import error_embed, timeout_embed
 from ..lounge import build_lounge_prompt
-from ..memory_loader import load_auto_memory
 from .event_processor import EventProcessor
 from .run_config import RunConfig
 

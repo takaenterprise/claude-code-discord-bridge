@@ -81,7 +81,7 @@ class ShellExecCog(commands.Cog):
                 proc.communicate(),
                 timeout=EXEC_TIMEOUT,
             )
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError:  # noqa: UP041 — asyncio.TimeoutError != builtins.TimeoutError on Python 3.10
             embed = discord.Embed(
                 title="タイムアウト",
                 description=f"コマンドが{EXEC_TIMEOUT}秒以内に完了しませんでした。",

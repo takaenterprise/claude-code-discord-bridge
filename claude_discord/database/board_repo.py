@@ -46,27 +46,31 @@ CREATE INDEX IF NOT EXISTS idx_board_priority ON board_items(priority);
 """
 
 # Valid statuses for board items.
-VALID_STATUSES = frozenset({
-    "not_started",  # 未着手
-    "in_progress",  # 進行中
-    "blocked",      # 止まってる（待ち or 詰まり）
-    "done",         # 完了
-    "running",      # 自動稼働中（放っておいてOK）
-})
+VALID_STATUSES = frozenset(
+    {
+        "not_started",  # 未着手
+        "in_progress",  # 進行中
+        "blocked",  # 止まってる（待ち or 詰まり）
+        "done",  # 完了
+        "running",  # 自動稼働中（放っておいてOK）
+    }
+)
 
 # Valid categories aligned with folder structure.
-VALID_CATEGORIES = frozenset({
-    "A_listing",     # 出品
-    "B_inventory",   # 在庫・発注
-    "C_order_cs",    # 受注・CS
-    "D_accounting",  # 経理
-    "E_data",        # データ基盤
-    "F_goq",         # GoQ連携
-    "G_crm",         # CRM
-    "API",           # API連携（SP-API, MF, Yahoo等）
-    "infra",         # インフラ（CCDB, セキュリティ等）
-    "other",         # その他
-})
+VALID_CATEGORIES = frozenset(
+    {
+        "A_listing",  # 出品
+        "B_inventory",  # 在庫・発注
+        "C_order_cs",  # 受注・CS
+        "D_accounting",  # 経理
+        "E_data",  # データ基盤
+        "F_goq",  # GoQ連携
+        "G_crm",  # CRM
+        "API",  # API連携（SP-API, MF, Yahoo等）
+        "infra",  # インフラ（CCDB, セキュリティ等）
+        "other",  # その他
+    }
+)
 
 
 @dataclass
@@ -160,9 +164,7 @@ class BoardRepository:
             row_id = cursor.lastrowid
             await db.commit()
 
-            cur = await db.execute(
-                "SELECT * FROM board_items WHERE id = ?", (row_id,)
-            )
+            cur = await db.execute("SELECT * FROM board_items WHERE id = ?", (row_id,))
             row = await cur.fetchone()
 
         if row is None:
@@ -178,8 +180,14 @@ class BoardRepository:
         Allowed kwargs: title, category, status, blocker, next_action, priority, wf_id, owner.
         """
         allowed = {
-            "title", "category", "status", "blocker",
-            "next_action", "priority", "wf_id", "owner",
+            "title",
+            "category",
+            "status",
+            "blocker",
+            "next_action",
+            "priority",
+            "wf_id",
+            "owner",
         }
         updates = {k: v for k, v in kwargs.items() if k in allowed}
         if not updates:
@@ -214,9 +222,7 @@ class BoardRepository:
             )
             await db.commit()
 
-            cur = await db.execute(
-                "SELECT * FROM board_items WHERE id = ?", (item_id,)
-            )
+            cur = await db.execute("SELECT * FROM board_items WHERE id = ?", (item_id,))
             row = await cur.fetchone()
 
         if row is None:
@@ -229,9 +235,7 @@ class BoardRepository:
     async def delete(self, item_id: int) -> bool:
         """Delete a board item by ID. Returns True if deleted."""
         async with aiosqlite.connect(self._db_path) as db:
-            cursor = await db.execute(
-                "DELETE FROM board_items WHERE id = ?", (item_id,)
-            )
+            cursor = await db.execute("DELETE FROM board_items WHERE id = ?", (item_id,))
             await db.commit()
             deleted = cursor.rowcount > 0
 
@@ -243,9 +247,7 @@ class BoardRepository:
         """Get a single board item by ID."""
         async with aiosqlite.connect(self._db_path) as db:
             db.row_factory = aiosqlite.Row
-            cur = await db.execute(
-                "SELECT * FROM board_items WHERE id = ?", (item_id,)
-            )
+            cur = await db.execute("SELECT * FROM board_items WHERE id = ?", (item_id,))
             row = await cur.fetchone()
 
         return _row_to_item(row) if row else None

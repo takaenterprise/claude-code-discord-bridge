@@ -27,8 +27,8 @@ A12_WEBHOOK_PATH = "a12-new-product-kw"
 A11_WEBHOOK_PATH = "a11-kw-optimize"
 
 # Embed colors
-COLOR_STARTED = 0x3498DB   # 青
-COLOR_ERROR = 0xE74C3C     # 赤
+COLOR_STARTED = 0x3498DB  # 青
+COLOR_ERROR = 0xE74C3C  # 赤
 
 
 class KwTriggerCog(commands.Cog):
@@ -86,7 +86,9 @@ class KwTriggerCog(commands.Cog):
             if brand:
                 embed.add_field(name="ブランド", value=brand, inline=True)
         else:
-            embed.description = "n8n Webhookの呼び出しに失敗しました。WFがactiveか確認してください。"
+            embed.description = (
+                "n8n Webhookの呼び出しに失敗しました。WFがactiveか確認してください。"
+            )
 
         await interaction.followup.send(embed=embed)
 
@@ -115,7 +117,9 @@ class KwTriggerCog(commands.Cog):
                 "Apify B1 → Sonnet生成 → SS-08書込 → 結果通知まで約5-6分。"
             )
         else:
-            embed.description = "n8n Webhookの呼び出しに失敗しました。WFがactiveか確認してください。"
+            embed.description = (
+                "n8n Webhookの呼び出しに失敗しました。WFがactiveか確認してください。"
+            )
 
         await interaction.followup.send(embed=embed)
 
@@ -124,14 +128,16 @@ class KwTriggerCog(commands.Cog):
         try:
             import aiohttp
 
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
+            async with (
+                aiohttp.ClientSession() as session,
+                session.post(
                     url,
                     json=payload,
                     timeout=aiohttp.ClientTimeout(total=30),
-                ) as resp:
-                    logger.info("n8n webhook %s → %d", url, resp.status)
-                    return resp.status == 200
+                ) as resp,
+            ):
+                logger.info("n8n webhook %s → %d", url, resp.status)
+                return resp.status == 200
         except Exception:
             logger.exception("n8n webhook call failed: %s", url)
             return False
