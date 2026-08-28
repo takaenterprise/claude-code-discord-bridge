@@ -463,7 +463,8 @@ class ListingCommandCog(commands.Cog):
                         description=(
                             f"**JAN:** `{j}`\n"
                             f"**売価:** {price}円\n"
-                            f"**画像:** {'あり' if has_images else '未設定'} / **説明文:** {'あり' if has_desc else '未設定'}\n"
+                            f"**画像:** {'あり' if has_images else '未設定'} / "
+                            f"**説明文:** {'あり' if has_desc else '未設定'}\n"
                             f"**カテゴリID:** {' / '.join(cat_status)}"
                         ),
                         color=COLOR_PREVIEW,

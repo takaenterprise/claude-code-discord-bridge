@@ -196,7 +196,9 @@ class UsageRepository:
                     COALESCE(SUM(input_tokens), 0) as inp,
                     COALESCE(SUM(output_tokens), 0) as outp,
                     COALESCE(SUM(duration_ms), 0) as dur
-                FROM usage_records WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now', 'localtime')"""
+                FROM usage_records
+                WHERE strftime('%Y-%m', created_at)
+                    = strftime('%Y-%m', 'now', 'localtime')"""
                 cursor = await db.execute(query)
             row = await cursor.fetchone()
             return UsageSummary(
@@ -280,7 +282,10 @@ class UsageRepository:
             return [UsageRecord(**dict(row)) for row in rows]
 
     async def get_daily_breakdown(self, year_month: str | None = None) -> list[dict]:
-        """Get daily cost breakdown for a given month. Returns list of {date, sessions, cost_usd}."""
+        """Get daily cost breakdown for a given month.
+
+        Returns list of {date, sessions, cost_usd}.
+        """
         async with aiosqlite.connect(self.db_path) as db:
             if year_month:
                 query = """SELECT

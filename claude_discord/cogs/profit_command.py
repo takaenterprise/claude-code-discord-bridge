@@ -104,7 +104,8 @@ class ProfitCommandCog(commands.Cog):
             title = f"利益率確認中... SKU: {sku}" + (f" / 店舗: {shop}" if shop else " (全店舗)")
         else:
             await interaction.response.send_message(
-                "`sku`（利益率モード）または `master`（マスタ表示モード）のいずれかを指定してください。",
+                "`sku`（利益率モード）または `master`"
+                "（マスタ表示モード）のいずれかを指定してください。",
                 ephemeral=True,
             )
             return

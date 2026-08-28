@@ -142,7 +142,6 @@ class GoqUploadCommandCog(commands.Cog):
 
                 # 各モールの結果をフィールドに
                 for r in results:
-                    mark = "OK" if r.get("ok") else "NG"
                     rows = r.get("rows", 0)
                     msg = r.get("msg", "")
                     sheet = r.get("sheet", r.get("mall", "?"))

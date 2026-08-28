@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -458,10 +459,8 @@ class ImageGenCommandCog(commands.Cog):
         if timed_out or view.result != "confirm":
             embed.title = "🎬 漫画LP キャンセル"
             embed.color = COLOR_ERROR
-            try:
+            with contextlib.suppress(Exception):
                 await msg.edit(embed=embed, view=None)
-            except Exception:
-                pass
             return
 
         # Step 6: バッチ起動

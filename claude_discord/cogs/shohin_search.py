@@ -135,7 +135,7 @@ class ShohinSearchCog(commands.Cog):
 
         # 結果を Embed 形式で表示
         embeds = []
-        for i, r in enumerate(results):
+        for r in results:
             name = r.get("name", "不明")
             spec = r.get("spec", "")
             title = f"{name}" + (f"  ({spec})" if spec else "")

@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -404,7 +405,9 @@ def _build_preview_embed(preview: dict, user_display_name: str = "") -> discord.
     # 条件未達の場合はフッターに案内
     if not preview.get("minConditionsMet", True):
         footer_parts.append(
-            "\u26a0\ufe0f \u6700\u4f4e\u767a\u6ce8\u6761\u4ef6\u672a\u9054\u306e\u305f\u3081\u300cJAN\u8ffd\u52a0\u300d\u3067\u5546\u54c1\u3092\u8ffd\u52a0\u3057\u3066\u304f\u3060\u3055\u3044"
+            "\u26a0\ufe0f \u6700\u4f4e\u767a\u6ce8\u6761\u4ef6\u672a\u9054\u306e\u305f\u3081"
+            "\u300cJAN\u8ffd\u52a0\u300d\u3067\u5546\u54c1\u3092"
+            "\u8ffd\u52a0\u3057\u3066\u304f\u3060\u3055\u3044"
         )
     embed.set_footer(text=" | ".join(footer_parts))
 
@@ -415,7 +418,6 @@ def _build_result_embed(
     result: dict, dry_run: bool, email_result: dict | None = None
 ) -> discord.Embed:
     """実行結果JSONからEmbed を構築"""
-    status = result.get("status", "")
     order_ids = result.get("orderIds", [])
     total_items = result.get("totalItems", 0)
     total_amount = result.get("totalAmount", 0)
@@ -505,7 +507,14 @@ def _build_result_embed(
     elif not dry_run and email_result is None:
         embed.add_field(
             name="\u30e1\u30fc\u30eb\u9001\u4fe1",
-            value="GAS_MANUAL_ORDER_URL \u672a\u8a2d\u5b9a\u306e\u305f\u3081\u30b9\u30ad\u30c3\u30d7\nSS-07 \u30e1\u30cb\u30e5\u30fc\u300c\u81ea\u52d5\u767a\u6ce8\u30e1\u30cb\u30e5\u30fc\u300d\u2192\u300c\u624b\u52d5\u767a\u6ce8\u30e1\u30fc\u30eb\u9001\u4fe1\u300d\u3067\u624b\u52d5\u9001\u4fe1",
+            value=(
+                "GAS_MANUAL_ORDER_URL \u672a\u8a2d\u5b9a\u306e"
+                "\u305f\u3081\u30b9\u30ad\u30c3\u30d7\n"
+                "SS-07 \u30e1\u30cb\u30e5\u30fc\u300c\u81ea\u52d5\u767a\u6ce8"
+                "\u30e1\u30cb\u30e5\u30fc\u300d"
+                "\u2192\u300c\u624b\u52d5\u767a\u6ce8\u30e1\u30fc\u30eb\u9001\u4fe1\u300d"
+                "\u3067\u624b\u52d5\u9001\u4fe1"
+            ),
             inline=False,
         )
 
@@ -539,11 +548,21 @@ class OrderCommandCog(commands.Cog):
 
     @app_commands.command(
         name="order",
-        description="\u624b\u52d5\u767a\u6ce8\uff08JAN:cs \u2192 \u30d7\u30ec\u30d3\u30e5\u30fc \u2192 \u78ba\u8a8d \u2192 SS-07/SS-13\u66f8\u304d\u8fbc\u307f\uff09",
+        description=(
+            "\u624b\u52d5\u767a\u6ce8\uff08JAN:cs \u2192 \u30d7\u30ec\u30d3\u30e5\u30fc \u2192 "
+            "\u78ba\u8a8d \u2192 SS-07/SS-13\u66f8\u304d\u8fbc\u307f\uff09"
+        ),
     )
     @app_commands.describe(
-        jans="JAN:cs\u5f62\u5f0f\uff08\u8907\u6570\u306f\u30b9\u30da\u30fc\u30b9\u533a\u5207\u308a\uff09\u4f8b: 4902397847281:3 4571104431404:5",
-        reason="\u767a\u6ce8\u7406\u7531\uff08\u30c7\u30d5\u30a9\u30eb\u30c8: \u5b9a\u671f\u88dc\u5145\uff09",
+        jans=(
+            "JAN:cs\u5f62\u5f0f\uff08\u8907\u6570\u306f"
+            "\u30b9\u30da\u30fc\u30b9\u533a\u5207\u308a\uff09"
+            "\u4f8b: 4902397847281:3 4571104431404:5"
+        ),
+        reason=(
+            "\u767a\u6ce8\u7406\u7531\uff08\u30c7\u30d5\u30a9\u30eb\u30c8: "
+            "\u5b9a\u671f\u88dc\u5145\uff09"
+        ),
     )
     @app_commands.choices(reason=REASON_CHOICES)
     async def order(
@@ -566,7 +585,8 @@ class OrderCommandCog(commands.Cog):
         jans = jans.strip()
         if not jans:
             await interaction.response.send_message(
-                "JAN:cs\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002\u4f8b: `4902397847281:3`",
+                "JAN:cs\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+                "\u4f8b: `4902397847281:3`",
                 ephemeral=True,
             )
             return
@@ -579,7 +599,10 @@ class OrderCommandCog(commands.Cog):
                 continue
             if ":" not in item:
                 await interaction.response.send_message(
-                    f"\u4e0d\u6b63\u306a\u5f62\u5f0f: `{item}`\nJAN:cs \u306e\u5f62\u5f0f\u3067\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\uff08\u4f8b: `4902397847281:3`\uff09",
+                    f"\u4e0d\u6b63\u306a\u5f62\u5f0f: `{item}`\n"
+                    "JAN:cs \u306e\u5f62\u5f0f\u3067"
+                    "\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044"
+                    "\uff08\u4f8b: `4902397847281:3`\uff09",
                     ephemeral=True,
                 )
                 return
@@ -592,7 +615,8 @@ class OrderCommandCog(commands.Cog):
                 return
             if not cs_part.isdigit() or int(cs_part) <= 0:
                 await interaction.response.send_message(
-                    f"cs\u6570\u304c\u4e0d\u6b63\u3067\u3059: `{item}`\uff081\u4ee5\u4e0a\u306e\u6570\u5024\u3092\u6307\u5b9a\uff09",
+                    f"cs\u6570\u304c\u4e0d\u6b63\u3067\u3059: `{item}`"
+                    "\uff081\u4ee5\u4e0a\u306e\u6570\u5024\u3092\u6307\u5b9a\uff09",
                     ephemeral=True,
                 )
                 return
@@ -600,7 +624,8 @@ class OrderCommandCog(commands.Cog):
 
         if not jan_items:
             await interaction.response.send_message(
-                "\u6709\u52b9\u306aJAN:cs\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093\u3067\u3057\u305f\u3002\u4f8b: `4902397847281:3`",
+                "\u6709\u52b9\u306aJAN:cs\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093\u3067\u3057\u305f\u3002"
+                "\u4f8b: `4902397847281:3`",
                 ephemeral=True,
             )
             return
@@ -609,8 +634,10 @@ class OrderCommandCog(commands.Cog):
         if user_id in _active_locks:
             locked = _active_locks[user_id]
             await interaction.response.send_message(
-                f"\u524d\u306e\u767a\u6ce8\u51e6\u7406\u304c\u9032\u884c\u4e2d\u3067\u3059: `{locked}`\n"
-                "\u5b8c\u4e86\u307e\u305f\u306f\u30ad\u30e3\u30f3\u30bb\u30eb\u3057\u3066\u304b\u3089\u6b21\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
+                f"\u524d\u306e\u767a\u6ce8\u51e6\u7406\u304c"
+                f"\u9032\u884c\u4e2d\u3067\u3059: `{locked}`\n"
+                "\u5b8c\u4e86\u307e\u305f\u306f\u30ad\u30e3\u30f3\u30bb\u30eb\u3057\u3066\u304b\u3089"
+                "\u6b21\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
                 ephemeral=True,
             )
             return
@@ -691,7 +718,9 @@ class OrderCommandCog(commands.Cog):
                 logger.exception("order preview failed")
                 embed = discord.Embed(
                     title="\u30a8\u30e9\u30fc",
-                    description=f"\u30d7\u30ec\u30d3\u30e5\u30fc\u53d6\u5f97\u306b\u5931\u6557: {e}",
+                    description=(
+                        f"\u30d7\u30ec\u30d3\u30e5\u30fc\u53d6\u5f97\u306b\u5931\u6557: {e}"
+                    ),
                     color=COLOR_ERROR,
                 )
                 await interaction.edit_original_response(embed=embed, view=None)
@@ -703,9 +732,12 @@ class OrderCommandCog(commands.Cog):
                 err = stderr.decode("utf-8", errors="replace").strip()
                 embed = discord.Embed(
                     title="\u30d7\u30ec\u30d3\u30e5\u30fc\u30a8\u30e9\u30fc",
-                    description=f"```\n{err[:800]}\n```"
-                    if err
-                    else "\u30d7\u30ec\u30d3\u30e5\u30fc\u30d5\u30a1\u30a4\u30eb\u304c\u751f\u6210\u3055\u308c\u307e\u305b\u3093\u3067\u3057\u305f\u3002",
+                    description=(
+                        f"```\n{err[:800]}\n```"
+                        if err
+                        else "\u30d7\u30ec\u30d3\u30e5\u30fc\u30d5\u30a1\u30a4\u30eb\u304c"
+                        "\u751f\u6210\u3055\u308c\u307e\u305b\u3093\u3067\u3057\u305f\u3002"
+                    ),
                     color=COLOR_ERROR,
                 )
                 await interaction.edit_original_response(embed=embed, view=None)
@@ -716,7 +748,10 @@ class OrderCommandCog(commands.Cog):
             except (json.JSONDecodeError, OSError) as e:
                 embed = discord.Embed(
                     title="\u30d1\u30fc\u30b9\u30a8\u30e9\u30fc",
-                    description=f"\u30d7\u30ec\u30d3\u30e5\u30fc\u7d50\u679c\u306e\u89e3\u6790\u306b\u5931\u6557: {e}",
+                    description=(
+                        f"\u30d7\u30ec\u30d3\u30e5\u30fc\u7d50\u679c\u306e"
+                        f"\u89e3\u6790\u306b\u5931\u6557: {e}"
+                    ),
                     color=COLOR_ERROR,
                 )
                 await interaction.edit_original_response(embed=embed, view=None)
@@ -758,7 +793,11 @@ class OrderCommandCog(commands.Cog):
                 jan_items = jan_items + view.added_jans
                 loading = discord.Embed(
                     title="\u767a\u6ce8\u5185\u5bb9\u3092\u518d\u691c\u8a3c\u4e2d...",
-                    description=f"\u5bfe\u8c61: {len(jan_items)}\u54c1\uff08{len(view.added_jans)}\u54c1\u8ffd\u52a0\uff09\n\u7406\u7531: {reason_label}",
+                    description=(
+                        f"\u5bfe\u8c61: {len(jan_items)}\u54c1"
+                        f"\uff08{len(view.added_jans)}\u54c1\u8ffd\u52a0\uff09\n"
+                        f"\u7406\u7531: {reason_label}"
+                    ),
                     color=COLOR_WORKING,
                 )
                 await interaction.edit_original_response(embed=loading, view=None)
@@ -837,10 +876,8 @@ class OrderCommandCog(commands.Cog):
         result_path = stdout.decode("utf-8", errors="replace").strip()
         result_data = None
         if result_path and Path(result_path).exists():
-            try:
+            with contextlib.suppress(json.JSONDecodeError, OSError):
                 result_data = json.loads(Path(result_path).read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                pass
 
         if proc.returncode != 0 or not result_data:
             err_msg = (

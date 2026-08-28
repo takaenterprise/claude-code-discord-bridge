@@ -302,7 +302,10 @@ class ChannelManageCog(commands.Cog):
         except discord.Forbidden:
             embed = discord.Embed(
                 title="権限エラー",
-                description="Botに「チャンネルの管理」権限がありません。\nDiscord Developer Portalで権限を追加してください。",
+                description=(
+                    "Botに「チャンネルの管理」権限がありません。\n"
+                    "Discord Developer Portalで権限を追加してください。"
+                ),
                 color=COLOR_ERROR,
             )
             await interaction.followup.send(embed=embed, ephemeral=True)
