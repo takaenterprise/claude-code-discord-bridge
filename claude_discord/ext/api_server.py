@@ -1013,7 +1013,7 @@ class ApiServer:
             except Exception as exc:
                 return web.json_response({"error": str(exc)}, status=404)
 
-        if not hasattr(channel, "history"):
+        if not isinstance(channel, _discord.abc.Messageable):
             return web.json_response(
                 {"error": "Channel does not support message history"},
                 status=400,
