@@ -105,7 +105,10 @@ class ChannelManageCog(commands.Cog):
         channel = await guild.create_text_channel(
             name=name,
             category=cat,
-            topic=topic,
+            # discord.py stubs type `topic` as `str` (its MISSING-sentinel pattern),
+            # but the runtime only special-cases MISSING and forwards None as-is —
+            # passing None here is intentional (no topic specified).
+            topic=topic,  # type: ignore[arg-type]
         )
         logger.info(
             "Created channel: #%s (ID: %d, category: %s)",

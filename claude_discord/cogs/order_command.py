@@ -182,7 +182,8 @@ class OrderConfirmView(discord.ui.View):
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.result = "confirm"
         for item in self.children:
-            item.disabled = True
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
         await interaction.response.edit_message(view=self)
         self.stop()
 
@@ -194,7 +195,8 @@ class OrderConfirmView(discord.ui.View):
     async def dry_run(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.result = "dry_run"
         for item in self.children:
-            item.disabled = True
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
         await interaction.response.edit_message(view=self)
         self.stop()
 
@@ -204,7 +206,8 @@ class OrderConfirmView(discord.ui.View):
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.result = "cancel"
         for item in self.children:
-            item.disabled = True
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
         await interaction.response.edit_message(view=self)
         self.stop()
 
@@ -241,7 +244,8 @@ class OrderConfirmView(discord.ui.View):
         self.added_jans = modal.added_jans
         self.result = "add_jans"
         for item in self.children:
-            item.disabled = True
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
         self.stop()
 
     async def on_timeout(self):
@@ -823,6 +827,10 @@ class OrderCommandCog(commands.Cog):
 
             # confirm or dry_run → ループ脱出
             break
+
+        # while 条件（iteration=0 < MAX_ADD_ITERATIONS>=1）により最低1周は必ず実行され、
+        # break 到達前は必ず view が代入済み（未代入なら手前のreturnで抜けている）
+        assert view is not None
 
         # Step 7: 発注実行
         dry_run = view.result == "dry_run"

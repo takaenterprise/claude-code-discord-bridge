@@ -169,6 +169,11 @@ class UsageRepository:
                 FROM usage_records WHERE date(created_at) = date('now', 'localtime')"""
                 cursor = await db.execute(query)
             row = await cursor.fetchone()
+            if row is None:
+                # COUNT(*)/SUM(...) with no GROUP BY always returns exactly one
+                # row, even over zero matching records — this guards the type
+                # only, it should never actually be hit.
+                return UsageSummary(0, 0.0, 0, 0, 0)
             return UsageSummary(
                 total_sessions=row[0],
                 total_cost_usd=row[1],
@@ -201,6 +206,11 @@ class UsageRepository:
                     = strftime('%Y-%m', 'now', 'localtime')"""
                 cursor = await db.execute(query)
             row = await cursor.fetchone()
+            if row is None:
+                # COUNT(*)/SUM(...) with no GROUP BY always returns exactly one
+                # row, even over zero matching records — this guards the type
+                # only, it should never actually be hit.
+                return UsageSummary(0, 0.0, 0, 0, 0)
             return UsageSummary(
                 total_sessions=row[0],
                 total_cost_usd=row[1],

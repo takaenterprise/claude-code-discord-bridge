@@ -174,7 +174,8 @@ class ListingConfirmView(discord.ui.View):
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.result = "confirm"
         for item in self.children:
-            item.disabled = True
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
         await interaction.response.edit_message(view=self)
         self.stop()
 
@@ -182,7 +183,8 @@ class ListingConfirmView(discord.ui.View):
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.result = "cancel"
         for item in self.children:
-            item.disabled = True
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
         await interaction.response.edit_message(view=self)
         self.stop()
 
@@ -190,7 +192,8 @@ class ListingConfirmView(discord.ui.View):
     async def dry_run(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.result = "dry_run"
         for item in self.children:
-            item.disabled = True
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
         await interaction.response.edit_message(view=self)
         self.stop()
 
@@ -689,7 +692,9 @@ class ListingCommandCog(commands.Cog):
 
             if not submit_ok:
                 title, color = f"{mode_label}失敗", COLOR_ERROR
-            elif mall_results and 0 < mall_ok_count < len(mall_results):
+            elif (
+                mall_results and mall_ok_count is not None and 0 < mall_ok_count < len(mall_results)
+            ):
                 title, color = f"{mode_label}一部失敗", COLOR_WORKING
             else:
                 title, color = f"{mode_label}完了", COLOR_SUCCESS
