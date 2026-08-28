@@ -16,7 +16,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 import discord
@@ -297,7 +297,9 @@ class ListingCommandCog(commands.Cog):
             "user_id": user_id,
             "user_name": str(interaction.user),
             "label": lock_label,
-            "started_at": datetime.now(UTC),
+            "started_at": datetime.now(
+                timezone.utc  # noqa: UP017 — datetime.UTC needs Python 3.11; keep timezone.utc for 3.10
+            ),
         }
 
         try:
