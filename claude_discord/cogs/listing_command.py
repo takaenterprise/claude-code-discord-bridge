@@ -32,21 +32,21 @@ logger = logging.getLogger(__name__)
 PIPELINE_SCRIPT = "/home/ubuntu/ec-automation-system/scripts/shuppin_pipeline.py"
 PIPELINE_PROJECT_ROOT = os.path.dirname(os.path.dirname(PIPELINE_SCRIPT))
 PREVIEW_TIMEOUT = 60
-UNLISTED_PREVIEW_TIMEOUT = 30   # 未出品件数取得（読み取り専用サブプロセス）
-SUBMIT_TIMEOUT_BASE = 2200      # 単一モール×1JAN。最悪ケース=amazon 2アカ×840秒+マージン。
-                                 # 下位層(pipeline)が先に構造化エラーで切れる設計
+UNLISTED_PREVIEW_TIMEOUT = 30  # 未出品件数取得（読み取り専用サブプロセス）
+SUBMIT_TIMEOUT_BASE = 2200  # 単一モール×1JAN。最悪ケース=amazon 2アカ×840秒+マージン。
+# 下位層(pipeline)が先に構造化エラーで切れる設計
 SUBMIT_TIMEOUT_ALL_BASE = 1500  # 全モール×1JAN (25分, Yahoo実測5分ベース)
-SUBMIT_TIMEOUT_PER_JAN = 1500   # 追加JAN毎 (25分/JAN)
-SUBMIT_TIMEOUT_MAX = 3600       # 上限1時間
-MAX_JANS = 5                    # 複数JAN指定時の上限
-PROC_KILL_WAIT = 5              # タイムアウト後のプロセス停止待ち上限(秒)
+SUBMIT_TIMEOUT_PER_JAN = 1500  # 追加JAN毎 (25分/JAN)
+SUBMIT_TIMEOUT_MAX = 3600  # 上限1時間
+MAX_JANS = 5  # 複数JAN指定時の上限
+PROC_KILL_WAIT = 5  # タイムアウト後のプロセス停止待ち上限(秒)
 
 # Embed カラー
-COLOR_PREVIEW = 0x3498DB   # 青
-COLOR_SUCCESS = 0x2ECC71   # 緑
-COLOR_ERROR = 0xE74C3C     # 赤
-COLOR_CANCEL = 0x95A5A6    # グレー
-COLOR_WORKING = 0xF39C12   # オレンジ
+COLOR_PREVIEW = 0x3498DB  # 青
+COLOR_SUCCESS = 0x2ECC71  # 緑
+COLOR_ERROR = 0xE74C3C  # 赤
+COLOR_CANCEL = 0x95A5A6  # グレー
+COLOR_WORKING = 0xF39C12  # オレンジ
 
 # コマンドグローバル1本ロック（別ユーザーの同時実行による同一JAN二重submitを防ぐ）
 _global_lock: dict[str, object] | None = None
@@ -166,9 +166,7 @@ class ListingConfirmView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                "このボタンは操作できません。", ephemeral=True
-            )
+            await interaction.response.send_message("このボタンは操作できません。", ephemeral=True)
             return False
         return True
 
@@ -176,23 +174,26 @@ class ListingConfirmView(discord.ui.View):
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.result = "confirm"
         for item in self.children:
-            item.disabled = True
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
         await interaction.response.edit_message(view=self)
         self.stop()
 
-    @discord.ui.button(label="やめる", style=discord.ButtonStyle.danger, emoji="\u274C")
+    @discord.ui.button(label="やめる", style=discord.ButtonStyle.danger, emoji="\u274c")
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.result = "cancel"
         for item in self.children:
-            item.disabled = True
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
         await interaction.response.edit_message(view=self)
         self.stop()
 
-    @discord.ui.button(label="ドライラン", style=discord.ButtonStyle.secondary, emoji="\U0001F9EA")
+    @discord.ui.button(label="ドライラン", style=discord.ButtonStyle.secondary, emoji="\U0001f9ea")
     async def dry_run(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.result = "dry_run"
         for item in self.children:
-            item.disabled = True
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
         await interaction.response.edit_message(view=self)
         self.stop()
 
@@ -223,15 +224,17 @@ class ListingCommandCog(commands.Cog):
         mall="出品先モール（必須）",
         jan="JAN（カンマ区切りで最大5件。未指定=未出品JAN全部）",
     )
-    @app_commands.choices(mall=[
-        app_commands.Choice(name="ALL SHOP（全モール）", value="all"),
-        app_commands.Choice(name="Amazon", value="amazon"),
-        app_commands.Choice(name="Yahoo", value="yahoo"),
-        app_commands.Choice(name="Qoo10", value="qoo10"),
-        app_commands.Choice(name="auPAY", value="aupay"),
-        app_commands.Choice(name="Temu", value="temu"),
-        app_commands.Choice(name="メルカリ", value="mercari"),
-    ])
+    @app_commands.choices(
+        mall=[
+            app_commands.Choice(name="ALL SHOP（全モール）", value="all"),
+            app_commands.Choice(name="Amazon", value="amazon"),
+            app_commands.Choice(name="Yahoo", value="yahoo"),
+            app_commands.Choice(name="Qoo10", value="qoo10"),
+            app_commands.Choice(name="auPAY", value="aupay"),
+            app_commands.Choice(name="Temu", value="temu"),
+            app_commands.Choice(name="メルカリ", value="mercari"),
+        ]
+    )
     async def shuppin(
         self,
         interaction: discord.Interaction,
@@ -297,7 +300,9 @@ class ListingCommandCog(commands.Cog):
             "user_id": user_id,
             "user_name": str(interaction.user),
             "label": lock_label,
-            "started_at": datetime.now(timezone.utc),
+            "started_at": datetime.now(
+                timezone.utc  # noqa: UP017 — datetime.UTC needs Python 3.11; keep timezone.utc for 3.10
+            ),
         }
 
         try:
@@ -328,7 +333,10 @@ class ListingCommandCog(commands.Cog):
         )
         try:
             proc = await asyncio.create_subprocess_exec(
-                "python3", "-c", script, mall,
+                "python3",
+                "-c",
+                script,
+                mall,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -341,7 +349,7 @@ class ListingCommandCog(commands.Cog):
             if not isinstance(data, dict) or "count" not in data:
                 return None
             return data
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError:  # noqa: UP041 — asyncio.TimeoutError != builtins.TimeoutError on Python 3.10
             logger.warning("/shuppin: 未出品件数の取得がタイムアウトしました")
             return None
         except (json.JSONDecodeError, ValueError, OSError):
@@ -383,8 +391,11 @@ class ListingCommandCog(commands.Cog):
             for j in jan_list:
                 try:
                     proc = await asyncio.create_subprocess_exec(
-                        "python3", PIPELINE_SCRIPT,
-                        "preview", "--jan", j,
+                        "python3",
+                        PIPELINE_SCRIPT,
+                        "preview",
+                        "--jan",
+                        j,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                     )
@@ -396,7 +407,11 @@ class ListingCommandCog(commands.Cog):
                         preview_data.append((j, data.get("product", {})))
                     else:
                         preview_data.append((j, None))
-                except (asyncio.TimeoutError, json.JSONDecodeError, Exception):
+                except (  # noqa: UP041 — asyncio.TimeoutError != builtins.TimeoutError on Python 3.10
+                    asyncio.TimeoutError,
+                    json.JSONDecodeError,
+                    Exception,
+                ):
                     preview_data.append((j, None))
 
             if is_multi:
@@ -416,9 +431,13 @@ class ListingCommandCog(commands.Cog):
                             ("temu_cat_id", "Temu"),
                         ]:
                             val = product.get(cat_key, "")
-                            cat_parts.append(f"{cat_label}:\u2705" if val else f"{cat_label}:\u274c")
+                            cat_parts.append(
+                                f"{cat_label}:\u2705" if val else f"{cat_label}:\u274c"
+                            )
                         cat_str = " ".join(cat_parts)
-                        preview_lines.append(f"`{j}` {name[:20]} / {price}円 / {has_img}\n　{cat_str}")
+                        preview_lines.append(
+                            f"`{j}` {name[:20]} / {price}円 / {has_img}\n　{cat_str}"
+                        )
                     else:
                         preview_lines.append(f"`{j}` プレビュー取得失敗")
                 embed = discord.Embed(
@@ -449,7 +468,8 @@ class ListingCommandCog(commands.Cog):
                         description=(
                             f"**JAN:** `{j}`\n"
                             f"**売価:** {price}円\n"
-                            f"**画像:** {'あり' if has_images else '未設定'} / **説明文:** {'あり' if has_desc else '未設定'}\n"
+                            f"**画像:** {'あり' if has_images else '未設定'} / "
+                            f"**説明文:** {'あり' if has_desc else '未設定'}\n"
                             f"**カテゴリID:** {' / '.join(cat_status)}"
                         ),
                         color=COLOR_PREVIEW,
@@ -495,7 +515,9 @@ class ListingCommandCog(commands.Cog):
                     color=COLOR_PREVIEW,
                 )
 
-        mall_label = "全モール（Amazon/Yahoo/Qoo10/auPAY/Temu/メルカリ）" if mall == "all" else mall.upper()
+        mall_label = (
+            "全モール（Amazon/Yahoo/Qoo10/auPAY/Temu/メルカリ）" if mall == "all" else mall.upper()
+        )
         embed.set_footer(text=f"出品先: {mall_label}")
 
         # Step 3: 確認ボタン
@@ -548,8 +570,11 @@ class ListingCommandCog(commands.Cog):
 
         try:
             cmd = [
-                "python3", PIPELINE_SCRIPT,
-                "submit", "--mall", mall,
+                "python3",
+                PIPELINE_SCRIPT,
+                "submit",
+                "--mall",
+                mall,
             ]
             if jan:
                 cmd.extend(["--jan", jan])
@@ -561,10 +586,8 @@ class ListingCommandCog(commands.Cog):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
-        except asyncio.TimeoutError:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except asyncio.TimeoutError:  # noqa: UP041 — asyncio.TimeoutError != builtins.TimeoutError on Python 3.10
             # タイムアウトしたプロセスを確実に止める（表示の裏で出品が続行する事故を防ぐ）
             try:
                 proc.kill()
@@ -669,7 +692,9 @@ class ListingCommandCog(commands.Cog):
 
             if not submit_ok:
                 title, color = f"{mode_label}失敗", COLOR_ERROR
-            elif mall_results and 0 < mall_ok_count < len(mall_results):
+            elif (
+                mall_results and mall_ok_count is not None and 0 < mall_ok_count < len(mall_results)
+            ):
                 title, color = f"{mode_label}一部失敗", COLOR_WORKING
             else:
                 title, color = f"{mode_label}完了", COLOR_SUCCESS
@@ -753,6 +778,10 @@ class ListingCommandCog(commands.Cog):
 
         logger.info(
             "/shuppin by %s: mall=%s, jan=%s, jan_count=%d, result=%s, ok=%s",
-            interaction.user.name, mall, jan or "all-unlisted",
-            n_jans, view.result, overall_ok,
+            interaction.user.name,
+            mall,
+            jan or "all-unlisted",
+            n_jans,
+            view.result,
+            overall_ok,
         )

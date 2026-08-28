@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -30,16 +31,16 @@ logger = logging.getLogger(__name__)
 
 # バックエンドスクリプト
 ORDER_SCRIPT = "/home/ubuntu/ec-automation-system/scripts/manual_order.py"
-PREVIEW_TIMEOUT = 60   # SS読み込みがあるので長め
+PREVIEW_TIMEOUT = 60  # SS読み込みがあるので長め
 EXECUTE_TIMEOUT = 120  # SS書き込み+CSV生成
 
 # Embed カラー
-COLOR_PREVIEW = 0x3498DB   # 青 - プレビュー
-COLOR_SUCCESS = 0x2ECC71   # 緑 - 成功
-COLOR_ERROR = 0xE74C3C     # 赤 - エラー
-COLOR_CANCEL = 0x95A5A6    # グレー - キャンセル
-COLOR_WORKING = 0xF39C12   # オレンジ - 処理中
-COLOR_WARNING = 0xE67E22   # ダークオレンジ - 警告あり
+COLOR_PREVIEW = 0x3498DB  # 青 - プレビュー
+COLOR_SUCCESS = 0x2ECC71  # 緑 - 成功
+COLOR_ERROR = 0xE74C3C  # 赤 - エラー
+COLOR_CANCEL = 0x95A5A6  # グレー - キャンセル
+COLOR_WORKING = 0xF39C12  # オレンジ - 処理中
+COLOR_WARNING = 0xE67E22  # ダークオレンジ - 警告あり
 
 # 1人1発注ロック: {user_id: "jans_str"}
 _active_locks: dict[int, str] = {}
@@ -140,7 +141,13 @@ class AddJanModal(discord.ui.Modal, title="追加JAN入力"):
 class OrderConfirmView(discord.ui.View):
     """発注確認ボタン（発注する / ドライラン / JAN追加 / キャンセル）"""
 
-    def __init__(self, user_id: int, preview_path: str, min_conditions_met: bool = True, candidates: dict | None = None):
+    def __init__(
+        self,
+        user_id: int,
+        preview_path: str,
+        min_conditions_met: bool = True,
+        candidates: dict | None = None,
+    ):
         super().__init__(timeout=300)  # 5分でタイムアウト
         self.user_id = user_id
         self.preview_path = preview_path
@@ -165,42 +172,49 @@ class OrderConfirmView(discord.ui.View):
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                "このボタンは操作できません。", ephemeral=True
-            )
+            await interaction.response.send_message("このボタンは操作できません。", ephemeral=True)
             return False
         return True
 
-    @discord.ui.button(label="\u767a\u6ce8\u3059\u308b", style=discord.ButtonStyle.success, emoji="\u2705")
+    @discord.ui.button(
+        label="\u767a\u6ce8\u3059\u308b", style=discord.ButtonStyle.success, emoji="\u2705"
+    )
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.result = "confirm"
         for item in self.children:
-            item.disabled = True
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
         await interaction.response.edit_message(view=self)
         self.stop()
 
-    @discord.ui.button(label="\u30c9\u30e9\u30a4\u30e9\u30f3", style=discord.ButtonStyle.secondary, emoji="\U0001F9EA")
+    @discord.ui.button(
+        label="\u30c9\u30e9\u30a4\u30e9\u30f3",
+        style=discord.ButtonStyle.secondary,
+        emoji="\U0001f9ea",
+    )
     async def dry_run(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.result = "dry_run"
         for item in self.children:
-            item.disabled = True
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
         await interaction.response.edit_message(view=self)
         self.stop()
 
-    @discord.ui.button(label="\u30ad\u30e3\u30f3\u30bb\u30eb", style=discord.ButtonStyle.danger, emoji="\u274C")
+    @discord.ui.button(
+        label="\u30ad\u30e3\u30f3\u30bb\u30eb", style=discord.ButtonStyle.danger, emoji="\u274c"
+    )
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.result = "cancel"
         for item in self.children:
-            item.disabled = True
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
         await interaction.response.edit_message(view=self)
         self.stop()
 
     async def _on_add_jan(self, interaction: discord.Interaction):
         """JAN追加ボタン → モーダルを開き、入力されたJANで再プレビュー"""
         if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                "このボタンは操作できません。", ephemeral=True
-            )
+            await interaction.response.send_message("このボタンは操作できません。", ephemeral=True)
             return
         # 候補テキスト生成（モーダルに表示）
         cand_lines = []
@@ -217,8 +231,7 @@ class OrderConfirmView(discord.ui.View):
                 diff = c.get("stockMinusRp", 0)
                 upc = c.get("unitPerCs", 1)
                 cand_lines.append(
-                    f"{c['jan']}:1 {name} "
-                    f"在庫{stock}/発注点{rp}/差{diff:+d} ({upc}個/cs)"
+                    f"{c['jan']}:1 {name} 在庫{stock}/発注点{rp}/差{diff:+d} ({upc}個/cs)"
                 )
             if len(cands) > 8:
                 cand_lines.append(f"... 他 {len(cands) - 8}件")
@@ -231,7 +244,8 @@ class OrderConfirmView(discord.ui.View):
         self.added_jans = modal.added_jans
         self.result = "add_jans"
         for item in self.children:
-            item.disabled = True
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
         self.stop()
 
     async def on_timeout(self):
@@ -342,10 +356,10 @@ def _build_preview_embed(preview: dict, user_display_name: str = "") -> discord.
                 label += f"/{info['maker']}"
             parts = []
             if min_cs > 0:
-                ok = "\u2705" if info["totalCs"] >= min_cs else "\u274C"
+                ok = "\u2705" if info["totalCs"] >= min_cs else "\u274c"
                 parts.append(f"\u6700\u5c0f{min_cs}cs{ok}")
             if min_amt > 0:
-                ok = "\u2705" if info["totalAmount"] >= min_amt else "\u274C"
+                ok = "\u2705" if info["totalAmount"] >= min_amt else "\u274c"
                 parts.append(f"\u6700\u4f4e\\{min_amt:,.0f}{ok}")
             cond_lines.append(f"**{label}**: {' / '.join(parts)}")
 
@@ -375,8 +389,7 @@ def _build_preview_embed(preview: dict, user_display_name: str = "") -> discord.
                 diff = c.get("stockMinusRp", 0)
                 upc = c.get("unitPerCs", 1)
                 cand_lines.append(
-                    f"`{c['jan']}` {name}\n"
-                    f"  在庫{stock} / 発注点{rp} / 差{diff:+d} ({upc}個/cs)"
+                    f"`{c['jan']}` {name}\n  在庫{stock} / 発注点{rp} / 差{diff:+d} ({upc}個/cs)"
                 )
             if len(cands) > 10:
                 cand_lines.append(f"... \u4ed6 {len(cands) - 10}\u4ef6")
@@ -395,15 +408,20 @@ def _build_preview_embed(preview: dict, user_display_name: str = "") -> discord.
         footer_parts.append(f"\u7406\u7531: {reason}")
     # 条件未達の場合はフッターに案内
     if not preview.get("minConditionsMet", True):
-        footer_parts.append("\u26a0\ufe0f \u6700\u4f4e\u767a\u6ce8\u6761\u4ef6\u672a\u9054\u306e\u305f\u3081\u300cJAN\u8ffd\u52a0\u300d\u3067\u5546\u54c1\u3092\u8ffd\u52a0\u3057\u3066\u304f\u3060\u3055\u3044")
+        footer_parts.append(
+            "\u26a0\ufe0f \u6700\u4f4e\u767a\u6ce8\u6761\u4ef6\u672a\u9054\u306e\u305f\u3081"
+            "\u300cJAN\u8ffd\u52a0\u300d\u3067\u5546\u54c1\u3092"
+            "\u8ffd\u52a0\u3057\u3066\u304f\u3060\u3055\u3044"
+        )
     embed.set_footer(text=" | ".join(footer_parts))
 
     return embed
 
 
-def _build_result_embed(result: dict, dry_run: bool, email_result: dict | None = None) -> discord.Embed:
+def _build_result_embed(
+    result: dict, dry_run: bool, email_result: dict | None = None
+) -> discord.Embed:
     """実行結果JSONからEmbed を構築"""
-    status = result.get("status", "")
     order_ids = result.get("orderIds", [])
     total_items = result.get("totalItems", 0)
     total_amount = result.get("totalAmount", 0)
@@ -483,10 +501,8 @@ def _build_result_embed(result: dict, dry_run: bool, email_result: dict | None =
             sent_list = email_result.get("sent", [])
             mail_lines = [f"\u9001\u4fe1\u6210\u529f: {sent_count}\u4ef6"]
             for s in sent_list[:5]:
-                wh = f" [{s.get('warehouse', '')}]" if s.get('warehouse') else ""
-                mail_lines.append(
-                    f"  {s.get('supplier', '?')}{wh} \u2192 {s.get('email', '?')}"
-                )
+                wh = f" [{s.get('warehouse', '')}]" if s.get("warehouse") else ""
+                mail_lines.append(f"  {s.get('supplier', '?')}{wh} \u2192 {s.get('email', '?')}")
             embed.add_field(
                 name="\u30e1\u30fc\u30eb\u9001\u4fe1",
                 value="\n".join(mail_lines),
@@ -495,13 +511,18 @@ def _build_result_embed(result: dict, dry_run: bool, email_result: dict | None =
     elif not dry_run and email_result is None:
         embed.add_field(
             name="\u30e1\u30fc\u30eb\u9001\u4fe1",
-            value="GAS_MANUAL_ORDER_URL \u672a\u8a2d\u5b9a\u306e\u305f\u3081\u30b9\u30ad\u30c3\u30d7\nSS-07 \u30e1\u30cb\u30e5\u30fc\u300c\u81ea\u52d5\u767a\u6ce8\u30e1\u30cb\u30e5\u30fc\u300d\u2192\u300c\u624b\u52d5\u767a\u6ce8\u30e1\u30fc\u30eb\u9001\u4fe1\u300d\u3067\u624b\u52d5\u9001\u4fe1",
+            value=(
+                "GAS_MANUAL_ORDER_URL \u672a\u8a2d\u5b9a\u306e"
+                "\u305f\u3081\u30b9\u30ad\u30c3\u30d7\n"
+                "SS-07 \u30e1\u30cb\u30e5\u30fc\u300c\u81ea\u52d5\u767a\u6ce8"
+                "\u30e1\u30cb\u30e5\u30fc\u300d"
+                "\u2192\u300c\u624b\u52d5\u767a\u6ce8\u30e1\u30fc\u30eb\u9001\u4fe1\u300d"
+                "\u3067\u624b\u52d5\u9001\u4fe1"
+            ),
             inline=False,
         )
 
-    embed.set_footer(
-        text=f"\u5408\u8a08: {total_items}\u54c1  \\{total_amount:,.0f}"
-    )
+    embed.set_footer(text=f"\u5408\u8a08: {total_items}\u54c1  \\{total_amount:,.0f}")
 
     return embed
 
@@ -531,11 +552,21 @@ class OrderCommandCog(commands.Cog):
 
     @app_commands.command(
         name="order",
-        description="\u624b\u52d5\u767a\u6ce8\uff08JAN:cs \u2192 \u30d7\u30ec\u30d3\u30e5\u30fc \u2192 \u78ba\u8a8d \u2192 SS-07/SS-13\u66f8\u304d\u8fbc\u307f\uff09",
+        description=(
+            "\u624b\u52d5\u767a\u6ce8\uff08JAN:cs \u2192 \u30d7\u30ec\u30d3\u30e5\u30fc \u2192 "
+            "\u78ba\u8a8d \u2192 SS-07/SS-13\u66f8\u304d\u8fbc\u307f\uff09"
+        ),
     )
     @app_commands.describe(
-        jans="JAN:cs\u5f62\u5f0f\uff08\u8907\u6570\u306f\u30b9\u30da\u30fc\u30b9\u533a\u5207\u308a\uff09\u4f8b: 4902397847281:3 4571104431404:5",
-        reason="\u767a\u6ce8\u7406\u7531\uff08\u30c7\u30d5\u30a9\u30eb\u30c8: \u5b9a\u671f\u88dc\u5145\uff09",
+        jans=(
+            "JAN:cs\u5f62\u5f0f\uff08\u8907\u6570\u306f"
+            "\u30b9\u30da\u30fc\u30b9\u533a\u5207\u308a\uff09"
+            "\u4f8b: 4902397847281:3 4571104431404:5"
+        ),
+        reason=(
+            "\u767a\u6ce8\u7406\u7531\uff08\u30c7\u30d5\u30a9\u30eb\u30c8: "
+            "\u5b9a\u671f\u88dc\u5145\uff09"
+        ),
     )
     @app_commands.choices(reason=REASON_CHOICES)
     async def order(
@@ -558,7 +589,8 @@ class OrderCommandCog(commands.Cog):
         jans = jans.strip()
         if not jans:
             await interaction.response.send_message(
-                "JAN:cs\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002\u4f8b: `4902397847281:3`",
+                "JAN:cs\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+                "\u4f8b: `4902397847281:3`",
                 ephemeral=True,
             )
             return
@@ -571,7 +603,10 @@ class OrderCommandCog(commands.Cog):
                 continue
             if ":" not in item:
                 await interaction.response.send_message(
-                    f"\u4e0d\u6b63\u306a\u5f62\u5f0f: `{item}`\nJAN:cs \u306e\u5f62\u5f0f\u3067\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\uff08\u4f8b: `4902397847281:3`\uff09",
+                    f"\u4e0d\u6b63\u306a\u5f62\u5f0f: `{item}`\n"
+                    "JAN:cs \u306e\u5f62\u5f0f\u3067"
+                    "\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044"
+                    "\uff08\u4f8b: `4902397847281:3`\uff09",
                     ephemeral=True,
                 )
                 return
@@ -584,7 +619,8 @@ class OrderCommandCog(commands.Cog):
                 return
             if not cs_part.isdigit() or int(cs_part) <= 0:
                 await interaction.response.send_message(
-                    f"cs\u6570\u304c\u4e0d\u6b63\u3067\u3059: `{item}`\uff081\u4ee5\u4e0a\u306e\u6570\u5024\u3092\u6307\u5b9a\uff09",
+                    f"cs\u6570\u304c\u4e0d\u6b63\u3067\u3059: `{item}`"
+                    "\uff081\u4ee5\u4e0a\u306e\u6570\u5024\u3092\u6307\u5b9a\uff09",
                     ephemeral=True,
                 )
                 return
@@ -592,7 +628,8 @@ class OrderCommandCog(commands.Cog):
 
         if not jan_items:
             await interaction.response.send_message(
-                "\u6709\u52b9\u306aJAN:cs\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093\u3067\u3057\u305f\u3002\u4f8b: `4902397847281:3`",
+                "\u6709\u52b9\u306aJAN:cs\u304c\u898b\u3064\u304b\u308a\u307e\u305b\u3093\u3067\u3057\u305f\u3002"
+                "\u4f8b: `4902397847281:3`",
                 ephemeral=True,
             )
             return
@@ -601,8 +638,10 @@ class OrderCommandCog(commands.Cog):
         if user_id in _active_locks:
             locked = _active_locks[user_id]
             await interaction.response.send_message(
-                f"\u524d\u306e\u767a\u6ce8\u51e6\u7406\u304c\u9032\u884c\u4e2d\u3067\u3059: `{locked}`\n"
-                "\u5b8c\u4e86\u307e\u305f\u306f\u30ad\u30e3\u30f3\u30bb\u30eb\u3057\u3066\u304b\u3089\u6b21\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
+                f"\u524d\u306e\u767a\u6ce8\u51e6\u7406\u304c"
+                f"\u9032\u884c\u4e2d\u3067\u3059: `{locked}`\n"
+                "\u5b8c\u4e86\u307e\u305f\u306f\u30ad\u30e3\u30f3\u30bb\u30eb\u3057\u3066\u304b\u3089"
+                "\u6b21\u3092\u5165\u529b\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
                 ephemeral=True,
             )
             return
@@ -656,10 +695,12 @@ class OrderCommandCog(commands.Cog):
 
             # Run preview
             cmd = [
-                "python3", ORDER_SCRIPT,
+                "python3",
+                ORDER_SCRIPT,
                 "preview",
                 *jan_items,
-                "--reason", reason_value,
+                "--reason",
+                reason_value,
             ]
 
             try:
@@ -668,10 +709,8 @@ class OrderCommandCog(commands.Cog):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
-                stdout, stderr = await asyncio.wait_for(
-                    proc.communicate(), timeout=PREVIEW_TIMEOUT
-                )
-            except asyncio.TimeoutError:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=PREVIEW_TIMEOUT)
+            except asyncio.TimeoutError:  # noqa: UP041 \u2014 asyncio.TimeoutError != builtins.TimeoutError on Python 3.10
                 embed = discord.Embed(
                     title="\u30bf\u30a4\u30e0\u30a2\u30a6\u30c8",
                     description="\u30d7\u30ec\u30d3\u30e5\u30fc\u53d6\u5f97\u306b\u6642\u9593\u304c\u304b\u304b\u308a\u3059\u304e\u307e\u3057\u305f\u3002",
@@ -683,7 +722,9 @@ class OrderCommandCog(commands.Cog):
                 logger.exception("order preview failed")
                 embed = discord.Embed(
                     title="\u30a8\u30e9\u30fc",
-                    description=f"\u30d7\u30ec\u30d3\u30e5\u30fc\u53d6\u5f97\u306b\u5931\u6557: {e}",
+                    description=(
+                        f"\u30d7\u30ec\u30d3\u30e5\u30fc\u53d6\u5f97\u306b\u5931\u6557: {e}"
+                    ),
                     color=COLOR_ERROR,
                 )
                 await interaction.edit_original_response(embed=embed, view=None)
@@ -695,20 +736,26 @@ class OrderCommandCog(commands.Cog):
                 err = stderr.decode("utf-8", errors="replace").strip()
                 embed = discord.Embed(
                     title="\u30d7\u30ec\u30d3\u30e5\u30fc\u30a8\u30e9\u30fc",
-                    description=f"```\n{err[:800]}\n```" if err else "\u30d7\u30ec\u30d3\u30e5\u30fc\u30d5\u30a1\u30a4\u30eb\u304c\u751f\u6210\u3055\u308c\u307e\u305b\u3093\u3067\u3057\u305f\u3002",
+                    description=(
+                        f"```\n{err[:800]}\n```"
+                        if err
+                        else "\u30d7\u30ec\u30d3\u30e5\u30fc\u30d5\u30a1\u30a4\u30eb\u304c"
+                        "\u751f\u6210\u3055\u308c\u307e\u305b\u3093\u3067\u3057\u305f\u3002"
+                    ),
                     color=COLOR_ERROR,
                 )
                 await interaction.edit_original_response(embed=embed, view=None)
                 return
 
             try:
-                preview_data = json.loads(
-                    Path(preview_path).read_text(encoding="utf-8")
-                )
+                preview_data = json.loads(Path(preview_path).read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError) as e:
                 embed = discord.Embed(
                     title="\u30d1\u30fc\u30b9\u30a8\u30e9\u30fc",
-                    description=f"\u30d7\u30ec\u30d3\u30e5\u30fc\u7d50\u679c\u306e\u89e3\u6790\u306b\u5931\u6557: {e}",
+                    description=(
+                        f"\u30d7\u30ec\u30d3\u30e5\u30fc\u7d50\u679c\u306e"
+                        f"\u89e3\u6790\u306b\u5931\u6557: {e}"
+                    ),
                     color=COLOR_ERROR,
                 )
                 await interaction.edit_original_response(embed=embed, view=None)
@@ -737,7 +784,9 @@ class OrderCommandCog(commands.Cog):
             min_conditions_met = preview_data.get("minConditionsMet", True)
             candidates = preview_data.get("candidates", {})
             preview_embed = _build_preview_embed(preview_data, user_display_name)
-            view = OrderConfirmView(user_id, preview_path, min_conditions_met=min_conditions_met, candidates=candidates)
+            view = OrderConfirmView(
+                user_id, preview_path, min_conditions_met=min_conditions_met, candidates=candidates
+            )
             await interaction.edit_original_response(embed=preview_embed, view=view)
 
             # ボタン待機
@@ -748,7 +797,11 @@ class OrderCommandCog(commands.Cog):
                 jan_items = jan_items + view.added_jans
                 loading = discord.Embed(
                     title="\u767a\u6ce8\u5185\u5bb9\u3092\u518d\u691c\u8a3c\u4e2d...",
-                    description=f"\u5bfe\u8c61: {len(jan_items)}\u54c1\uff08{len(view.added_jans)}\u54c1\u8ffd\u52a0\uff09\n\u7406\u7531: {reason_label}",
+                    description=(
+                        f"\u5bfe\u8c61: {len(jan_items)}\u54c1"
+                        f"\uff08{len(view.added_jans)}\u54c1\u8ffd\u52a0\uff09\n"
+                        f"\u7406\u7531: {reason_label}"
+                    ),
                     color=COLOR_WORKING,
                 )
                 await interaction.edit_original_response(embed=loading, view=None)
@@ -775,6 +828,10 @@ class OrderCommandCog(commands.Cog):
             # confirm or dry_run → ループ脱出
             break
 
+        # while 条件（iteration=0 < MAX_ADD_ITERATIONS>=1）により最低1周は必ず実行され、
+        # break 到達前は必ず view が代入済み（未代入なら手前のreturnで抜けている）
+        assert view is not None
+
         # Step 7: 発注実行
         dry_run = view.result == "dry_run"
         mode_label = "\u30c9\u30e9\u30a4\u30e9\u30f3" if dry_run else "\u767a\u6ce8"
@@ -788,9 +845,12 @@ class OrderCommandCog(commands.Cog):
 
         # execute 実行（--user でDiscord表示名を渡す）
         exec_cmd = [
-            "python3", ORDER_SCRIPT,
-            "execute", preview_path,
-            "--user", user_display_name,
+            "python3",
+            ORDER_SCRIPT,
+            "execute",
+            preview_path,
+            "--user",
+            user_display_name,
         ]
         if dry_run:
             exec_cmd.append("--dry-run")
@@ -801,10 +861,8 @@ class OrderCommandCog(commands.Cog):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=EXECUTE_TIMEOUT
-            )
-        except asyncio.TimeoutError:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=EXECUTE_TIMEOUT)
+        except asyncio.TimeoutError:  # noqa: UP041 — asyncio.TimeoutError != builtins.TimeoutError on Python 3.10
             embed = discord.Embed(
                 title="\u30bf\u30a4\u30e0\u30a2\u30a6\u30c8",
                 description="\u767a\u6ce8\u51e6\u7406\u306b\u6642\u9593\u304c\u304b\u304b\u308a\u3059\u304e\u307e\u3057\u305f\u3002\u624b\u52d5\u3067\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002",
@@ -826,15 +884,15 @@ class OrderCommandCog(commands.Cog):
         result_path = stdout.decode("utf-8", errors="replace").strip()
         result_data = None
         if result_path and Path(result_path).exists():
-            try:
-                result_data = json.loads(
-                    Path(result_path).read_text(encoding="utf-8")
-                )
-            except (json.JSONDecodeError, OSError):
-                pass
+            with contextlib.suppress(json.JSONDecodeError, OSError):
+                result_data = json.loads(Path(result_path).read_text(encoding="utf-8"))
 
         if proc.returncode != 0 or not result_data:
-            err_msg = stderr.decode("utf-8", errors="replace")[:800] if stderr else "\u4e0d\u660e\u306a\u30a8\u30e9\u30fc"
+            err_msg = (
+                stderr.decode("utf-8", errors="replace")[:800]
+                if stderr
+                else "\u4e0d\u660e\u306a\u30a8\u30e9\u30fc"
+            )
             embed = discord.Embed(
                 title="\u767a\u6ce8\u30a8\u30e9\u30fc",
                 description=f"```\n{err_msg}\n```",
@@ -857,7 +915,9 @@ class OrderCommandCog(commands.Cog):
 
                 try:
                     email_proc = await asyncio.create_subprocess_exec(
-                        "python3", ORDER_SCRIPT, "send-emails",
+                        "python3",
+                        ORDER_SCRIPT,
+                        "send-emails",
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                     )

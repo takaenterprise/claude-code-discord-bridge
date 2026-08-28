@@ -213,7 +213,7 @@ async def setup_bridge(
     # --- ChannelManageCog ---
     from .cogs.channel_manage import ChannelManageCog
 
-    channel_manage_cog = ChannelManageCog(bot)
+    channel_manage_cog = ChannelManageCog(bot)  # type: ignore[arg-type]  # consumers pass their own Bot subclass
     await bot.add_cog(channel_manage_cog)
     logger.info("Registered ChannelManageCog")
 

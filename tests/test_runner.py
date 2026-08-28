@@ -593,11 +593,28 @@ class TestImageStreamJson:
         assert text_blocks[0]["text"] == "what do you see?"
 
     @pytest.mark.asyncio
-    async def test_run_uses_devnull_stdin_without_images(self) -> None:
-        """run() uses stdin=DEVNULL for text-only sessions (no hang risk)."""
+    async def test_run_uses_pipe_stdin_without_images_for_permission_support(self) -> None:
+        """run() uses stdin=PIPE even for text-only sessions.
+
+        Superseded by 2b85bd3 (fix: stdin=PIPE統一でDiscord Allow/Denyボタンを機能させる):
+        text-only sessions previously used stdin=DEVNULL, which silently
+        dropped Allow/Deny button responses relayed via inject_tool_result().
+        stdin is now always PIPE so permission_request/elicitation replies
+        work regardless of whether the turn carries images.
+
+        The original hang-risk property this test guarded — a text-only
+        turn must never block waiting on stdin — still holds and is
+        asserted here directly: without image_urls, run() must not write
+        the initial user message to stdin (that only happens for
+        stream-json/image input), so the open PIPE is never a source of a
+        stuck write or a CLI read that never gets fed.
+        """
         import asyncio as _asyncio
 
         runner = ClaudeRunner()
+
+        mock_stdin = AsyncMock()
+        mock_stdin.write = MagicMock()
 
         mock_process = AsyncMock()
         mock_process.pid = 42
@@ -606,7 +623,7 @@ class TestImageStreamJson:
         mock_process.stdout.readline = AsyncMock(return_value=b"")
         mock_process.stderr = AsyncMock()
         mock_process.stderr.read = AsyncMock(return_value=b"")
-        mock_process.stdin = None  # DEVNULL → no stdin attribute
+        mock_process.stdin = mock_stdin
         mock_process.wait = AsyncMock(return_value=0)
 
         with (
@@ -619,9 +636,10 @@ class TestImageStreamJson:
             _ = [event async for event in runner.run("hello")]
 
         call_kwargs = mock_exec.call_args[1]
-        assert call_kwargs["stdin"] == _asyncio.subprocess.DEVNULL, (
-            "text-only sessions must use DEVNULL to avoid stdin-hang"
+        assert call_kwargs["stdin"] == _asyncio.subprocess.PIPE, (
+            "stdin must be PIPE (not DEVNULL) so Allow/Deny responses can reach the CLI"
         )
+        mock_stdin.write.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_multiple_image_urls_all_sent(self) -> None:

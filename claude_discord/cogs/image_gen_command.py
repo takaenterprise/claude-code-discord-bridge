@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -63,18 +64,23 @@ class MangaConfirmView(discord.ui.View):
         ],
     )
     async def select_animal(
-        self, interaction: discord.Interaction, select: discord.ui.Select,
+        self,
+        interaction: discord.Interaction,
+        select: discord.ui.Select,
     ) -> None:
         val = select.values[0]
         self.animal_override = None if val == "auto" else val
         label = "自動判定のまま" if val == "auto" else val
         await interaction.response.send_message(
-            f"✅ 動物: **{label}** に設定", ephemeral=True,
+            f"✅ 動物: **{label}** に設定",
+            ephemeral=True,
         )
 
     @discord.ui.button(label="作成する", style=discord.ButtonStyle.success, row=1)
     async def confirm(
-        self, interaction: discord.Interaction, button: discord.ui.Button,
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
     ) -> None:
         self.result = "confirm"
         for child in self.children:
@@ -84,7 +90,9 @@ class MangaConfirmView(discord.ui.View):
 
     @discord.ui.button(label="キャンセル", style=discord.ButtonStyle.danger, row=1)
     async def cancel(
-        self, interaction: discord.Interaction, button: discord.ui.Button,
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
     ) -> None:
         self.result = "cancel"
         for child in self.children:
@@ -123,7 +131,11 @@ async def _spawn_detached(*cmd: str) -> int:
             env.setdefault("XDG_RUNTIME_DIR", runtime_dir)
             env.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path={runtime_dir}/bus")
             proc = await asyncio.create_subprocess_exec(
-                "systemd-run", "--user", "--scope", f"--unit={scope_name}", "--",
+                "systemd-run",
+                "--user",
+                "--scope",
+                f"--unit={scope_name}",
+                "--",
                 *cmd,
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
@@ -138,7 +150,8 @@ async def _spawn_detached(*cmd: str) -> int:
             if proc.returncode is not None and proc.returncode != 0:
                 logger.warning(
                     "systemd-run scope=%s 即時失敗(rc=%d)、フォールバック",
-                    scope_name, proc.returncode,
+                    scope_name,
+                    proc.returncode,
                 )
             else:
                 logger.info("バッチ起動(systemd scope=%s): %s", scope_name, " ".join(cmd[:3]))
@@ -213,7 +226,7 @@ class ImageGenCommandCog(commands.Cog):
         # force/page 指定時は reason 必須
         if (force or page_val) and not (reason and reason.strip()):
             await interaction.response.send_message(
-                "❌ `force:True` または `page` 指定時は `reason:\"理由\"` が必須です。",
+                '❌ `force:True` または `page` 指定時は `reason:"理由"` が必須です。',
                 ephemeral=True,
             )
             return
@@ -272,7 +285,7 @@ class ImageGenCommandCog(commands.Cog):
         embed.add_field(
             name="JAN一覧",
             value="\n".join(f"• `{j}`" for j in jan_list[:20])
-            + (f"\n…他{len(jan_list)-20}件" if len(jan_list) > 20 else ""),
+            + (f"\n…他{len(jan_list) - 20}件" if len(jan_list) > 20 else ""),
             inline=False,
         )
         await interaction.response.send_message(embed=embed)
@@ -372,7 +385,8 @@ class ImageGenCommandCog(commands.Cog):
 
         # Step 2: 事前チェック（動物判定のみ）
         pre_cmd = [
-            "python3", f"{REPO_ROOT}/scripts/manga_remake_batch.py",
+            "python3",
+            f"{REPO_ROOT}/scripts/manga_remake_batch.py",
             "--pre-check",
         ]
         if jan_list:
@@ -385,13 +399,11 @@ class ImageGenCommandCog(commands.Cog):
                 cwd=REPO_ROOT,
             )
             stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=180,
+                proc.communicate(),
+                timeout=180,
             )
             if proc.returncode != 0:
-                raise RuntimeError(
-                    f"pre-check exit {proc.returncode}: "
-                    + stderr.decode()[-500:]
-                )
+                raise RuntimeError(f"pre-check exit {proc.returncode}: " + stderr.decode()[-500:])
             animals = json.loads(stdout.decode())
         except Exception as e:
             logger.exception("漫画LP 事前チェック失敗")
@@ -447,10 +459,8 @@ class ImageGenCommandCog(commands.Cog):
         if timed_out or view.result != "confirm":
             embed.title = "🎬 漫画LP キャンセル"
             embed.color = COLOR_ERROR
-            try:
+            with contextlib.suppress(Exception):
                 await msg.edit(embed=embed, view=None)
-            except Exception:
-                pass
             return
 
         # Step 6: バッチ起動
@@ -574,7 +584,7 @@ class ImageGenCommandCog(commands.Cog):
             embed.add_field(
                 name="JAN一覧",
                 value="\n".join(f"• `{j}`" for j in jan_list[:20])
-                + (f"\n…他{len(jan_list)-20}件" if len(jan_list) > 20 else ""),
+                + (f"\n…他{len(jan_list) - 20}件" if len(jan_list) > 20 else ""),
                 inline=False,
             )
         await interaction.response.send_message(embed=embed)
@@ -755,7 +765,7 @@ class ImageGenCommandCog(commands.Cog):
         embed.add_field(
             name="JAN一覧",
             value="\n".join(f"・ `{j}`" for j in jan_list[:20])
-            + (f"\n…他{len(jan_list)-20}件" if len(jan_list) > 20 else ""),
+            + (f"\n…他{len(jan_list) - 20}件" if len(jan_list) > 20 else ""),
             inline=False,
         )
         await interaction.response.send_message(embed=embed)

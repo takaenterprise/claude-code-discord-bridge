@@ -125,8 +125,8 @@ class ToolResultView(discord.ui.View):
         self._expanded = not self._expanded
         if self._expanded:
             button.label = "折りたたむ ▲"
-            content, embed = tool_result_embed(self._tool_title, self._full_content)
+            embed = tool_result_embed(self._tool_title, self._full_content)
         else:
             button.label = "展開 ▼"
-            content, embed = tool_result_preview_embed(self._tool_title, self._full_content)
-        await interaction.response.edit_message(content=content, embed=embed, view=self)
+            embed = tool_result_preview_embed(self._tool_title, self._full_content)
+        await interaction.response.edit_message(embed=embed, view=self)

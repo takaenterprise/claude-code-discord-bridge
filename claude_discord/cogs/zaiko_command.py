@@ -51,6 +51,7 @@ def _build_subprocess_env() -> dict[str, str]:
         logger.warning("env file not found: %s", ENV_FILE)
     return env
 
+
 COLOR_WORKING = 0xF39C12
 COLOR_SUCCESS = 0x2ECC71
 COLOR_ERROR = 0xE74C3C
@@ -143,10 +144,8 @@ class ZaikoCommandCog(commands.Cog):
                 cwd=SCRIPT_CWD,
                 env=_build_subprocess_env(),
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=TIMEOUT
-            )
-        except asyncio.TimeoutError:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=TIMEOUT)
+        except asyncio.TimeoutError:  # noqa: UP041 — asyncio.TimeoutError != builtins.TimeoutError on Python 3.10
             embed = discord.Embed(
                 title="タイムアウト",
                 description="処理に時間がかかりすぎました。",
@@ -209,5 +208,9 @@ class ZaikoCommandCog(commands.Cog):
 
         logger.info(
             "/pro-kakidasi by %s: action=%s, mall=%s, jan_count=%d, rc=%s",
-            interaction.user.name, action, mall, len(jan_list), proc.returncode,
+            interaction.user.name,
+            action,
+            mall,
+            len(jan_list),
+            proc.returncode,
         )

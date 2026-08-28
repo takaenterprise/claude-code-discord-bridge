@@ -67,7 +67,7 @@ class GoqUploadCommandCog(commands.Cog):
         mode = "dry-run（CSV生成のみ）" if dry_run else "GoQアップロード"
 
         embed = discord.Embed(
-            title=f"GoQ CSVアップロード実行中...",
+            title="GoQ CSVアップロード実行中...",
             description=f"モール: **{mall_label}**\nモード: {mode}",
             color=COLOR_WORKING,
         )
@@ -86,10 +86,8 @@ class GoqUploadCommandCog(commands.Cog):
                 stderr=asyncio.subprocess.PIPE,
                 cwd=SCRIPT_CWD,
             )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=TIMEOUT
-            )
-        except asyncio.TimeoutError:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=TIMEOUT)
+        except asyncio.TimeoutError:  # noqa: UP041 — asyncio.TimeoutError != builtins.TimeoutError on Python 3.10
             embed = discord.Embed(
                 title="タイムアウト",
                 description="処理に時間がかかりすぎました（10分超過）。",
@@ -128,13 +126,13 @@ class GoqUploadCommandCog(commands.Cog):
 
                 if ng_count == 0:
                     color = COLOR_SUCCESS
-                    title = f"GoQ CSVアップロード完了"
+                    title = "GoQ CSVアップロード完了"
                 elif ok_count == 0:
                     color = COLOR_ERROR
-                    title = f"GoQ CSVアップロード失敗"
+                    title = "GoQ CSVアップロード失敗"
                 else:
                     color = COLOR_PARTIAL
-                    title = f"GoQ CSVアップロード一部失敗"
+                    title = "GoQ CSVアップロード一部失敗"
 
                 embed = discord.Embed(
                     title=title,
@@ -144,7 +142,6 @@ class GoqUploadCommandCog(commands.Cog):
 
                 # 各モールの結果をフィールドに
                 for r in results:
-                    mark = "OK" if r.get("ok") else "NG"
                     rows = r.get("rows", 0)
                     msg = r.get("msg", "")
                     sheet = r.get("sheet", r.get("mall", "?"))
@@ -157,7 +154,9 @@ class GoqUploadCommandCog(commands.Cog):
                 if dry_run:
                     embed.set_footer(text="dry-runモード: GoQへのアップロードは行っていません")
                 else:
-                    embed.set_footer(text="GoQへのアップロードはバックグラウンドで実行中。完了するとDiscordに通知されます")
+                    embed.set_footer(
+                        text="GoQへのアップロードはバックグラウンドで実行中。完了するとDiscordに通知されます"
+                    )
             else:
                 # JSON解析できなかった場合はテキスト出力
                 lines = stdout_text.strip().split("\n")
@@ -179,5 +178,8 @@ class GoqUploadCommandCog(commands.Cog):
 
         logger.info(
             "/goq-upload by %s: mall=%s, dry_run=%s, rc=%s",
-            interaction.user.name, mall, dry_run, proc.returncode,
+            interaction.user.name,
+            mall,
+            dry_run,
+            proc.returncode,
         )
