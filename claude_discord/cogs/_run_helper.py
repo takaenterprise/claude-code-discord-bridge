@@ -104,6 +104,70 @@ def _truncate_result(content: str) -> str:
     return content[:TOOL_RESULT_MAX_CHARS] + "\n... (truncated)"
 
 
+def _check_and_repair_memo_entry(
+    *,
+    memo_dir: str,
+    bot_name: str,
+    thread_id: int,
+    thread_name: str,
+    entry: str,
+    now,
+) -> str | None:
+    """Run the 書込前契約検査 gate on ``entry`` before it reaches append_memo().
+
+    Builds the same candidate text append_memo() would actually write (the
+    file header too, when this call would create a new file — reusing
+    bot_memo.memo_path()/build_file_header() so the definition of "valid
+    header" lives in one place) and checks it. On a confirmed violation,
+    tries one deterministic repair (repair_entry) and re-checks; if that
+    still fails, returns None to signal "do not write this turn" — the only
+    case where a violation actually blocks the write.
+
+    Every outcome (pass / pass_after_repair / reject / check_error) is
+    logged via log_contract_event. **Fail-open**: if the check machinery
+    itself raises, that is caught *here* (not left to the outer try/except
+    in ``_write_bot_memo``) so a check bug logs check_error and still
+    returns the original, unchecked entry — a broken checker must never be
+    able to silently stop memos from being written at all.
+    """
+    from ..ext.bot_memo import build_file_header, memo_path
+    from ..ext.memo_contract import (
+        REQUIRED_FM_KEYS,
+        check_memo_contract,
+        log_contract_event,
+        repair_entry,
+    )
+
+    try:
+        path = memo_path(memo_dir, bot_name, thread_id, now)
+        is_new_file = not path.exists()
+        header = build_file_header(bot_name, thread_name, now) if is_new_file else ""
+        required_keys = REQUIRED_FM_KEYS if is_new_file else ()
+
+        verdict = check_memo_contract(header + entry, required_fm_keys=required_keys)
+        if verdict.ok:
+            log_contract_event(bot_name, thread_id, 1, verdict, "pass", now)
+            return entry
+
+        repaired = repair_entry(entry, verdict)
+        verdict2 = check_memo_contract(header + repaired, required_fm_keys=required_keys)
+        if verdict2.ok:
+            log_contract_event(bot_name, thread_id, 2, verdict2, "pass_after_repair", now)
+            return repaired
+
+        log_contract_event(bot_name, thread_id, 2, verdict2, "reject", now)
+        return None
+    except Exception:
+        logger.warning(
+            "Memo-contract check failed for thread %d — writing unchecked (fail-open)",
+            thread_id,
+            exc_info=True,
+        )
+        with contextlib.suppress(Exception):
+            log_contract_event(bot_name, thread_id, 0, None, "check_error", now)
+        return entry
+
+
 def _write_bot_memo(config: RunConfig, processor: EventProcessor) -> None:
     """Append this turn's Q&A to TakaBrain via the bot-memo bridge (記憶橋 v1).
 
@@ -112,6 +176,13 @@ def _write_bot_memo(config: RunConfig, processor: EventProcessor) -> None:
     change from before this feature existed. Also skips turns with no final
     result text (errors, a drained AskUserQuestion round, etc.) since there
     is nothing meaningful to record.
+
+    When the 書込前契約検査 gate is enabled (default — see
+    ``memo_contract.contract_enabled()``), the built entry is checked and,
+    on a confirmed violation, the write is skipped for this turn (see
+    ``_check_and_repair_memo_entry``). With the gate off, behaviour is
+    byte-for-byte v1: the entry is written unchecked and no
+    memo_contract.jsonl record is produced.
 
     Never raises — a memo failure must not affect the bot's normal reply
     flow, so all work here (including bot_memo's own internal try/except) is
@@ -131,24 +202,39 @@ def _write_bot_memo(config: RunConfig, processor: EventProcessor) -> None:
         from datetime import datetime
 
         from ..ext.bot_memo import append_memo, build_memo_entry
+        from ..ext.memo_contract import contract_enabled
 
         bot_name = os.getenv("BOT_NAME") or "bot"
+        thread_id = config.thread.id
         thread_name = getattr(config.thread, "name", "") or ""
         now = datetime.now()
 
         entry = build_memo_entry(
             bot_name=bot_name,
-            thread_id=config.thread.id,
+            thread_id=thread_id,
             thread_name=thread_name,
             prompt=config.prompt or "",
             result_text=result_text,
             session_id=processor.session_id,
             now=now,
         )
+
+        if contract_enabled():
+            entry = _check_and_repair_memo_entry(
+                memo_dir=memo_dir,
+                bot_name=bot_name,
+                thread_id=thread_id,
+                thread_name=thread_name,
+                entry=entry,
+                now=now,
+            )
+            if entry is None:
+                return  # confirmed contract violation — this turn is not memoized
+
         append_memo(
             memo_dir=memo_dir,
             bot_name=bot_name,
-            thread_id=config.thread.id,
+            thread_id=thread_id,
             thread_name=thread_name,
             entry=entry,
             now=now,

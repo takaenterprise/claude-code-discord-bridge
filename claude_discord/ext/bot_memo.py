@@ -15,6 +15,14 @@ Obsidian vault（TakaBrain）へmarkdownで自動記帳する。VMのbotで外�
 Public API:
     build_memo_entry(...) -> str       # 1ターン分のmarkdown断片を組み立てる
     append_memo(...) -> Path | None    # ファイルへ追記する（失敗時はNone）
+    memo_path(...) -> Path             # 書込先パスの計算（純関数）
+    build_file_header(...) -> str      # frontmatter+見出しの組立（純関数）
+
+``memo_path`` と ``build_file_header`` は append_memo() 内部の計算を抽出した
+ものであり、``memo_contract`` 検査層（_run_helper.py の書込前ゲート）が
+「これから書かれるファイルの中身」を実際の書込と同じ定義で組み立てて検査
+できるようにするために公開している。品質の定義（frontmatterの形・パスの
+命名規則）をここ1箇所だけに保ち、検査側での複製ドリフトを防ぐ。
 """
 
 from __future__ import annotations
@@ -102,6 +110,51 @@ def build_memo_entry(
     return "\n".join(lines)
 
 
+def memo_path(memo_dir: str, bot_name: str, thread_id: int, now: datetime) -> Path:
+    """Compute the target memo file path for this bot/thread/day.
+
+    Pure — no file I/O, never raises for well-formed inputs. Naming scheme:
+    ``<memo_dir>/YYYY-MM-DD_<bot_name>_<thread_idの下6桁>.md`` (one file per
+    thread per day).
+
+    Extracted from append_memo() so callers that need to know *before*
+    writing whether a given call would create a new file (e.g. the
+    memo-contract check gate, which decides whether frontmatter is required
+    in what it validates) can compute the same path without re-deriving the
+    naming rule.
+    """
+    date_label = now.strftime("%Y-%m-%d")
+    safe_bot = _sanitize_for_fs(bot_name, _BOT_NAME_MAX_CHARS)
+    thread_suffix = str(thread_id)[-6:]
+    filename = f"{date_label}_{safe_bot}_{thread_suffix}.md"
+    return Path(memo_dir) / filename
+
+
+def build_file_header(bot_name: str, thread_name: str, now: datetime) -> str:
+    """Build the frontmatter + heading block written once, at file creation.
+
+    Pure — no file I/O, never raises for well-formed inputs. Obsidian
+    frontmatter (``type: bot-conversation`` / ``when: YYYY-MM-DD`` /
+    ``topic: [<bot_name>, Discord]``) plus a heading with the thread name.
+
+    Extracted from append_memo() so the memo-contract check gate can
+    validate the exact header text that would be written for a new file,
+    rather than maintaining a second definition of "what a valid header
+    looks like" that could drift out of sync with this one.
+    """
+    date_label = now.strftime("%Y-%m-%d")
+    safe_bot = _sanitize_for_fs(bot_name, _BOT_NAME_MAX_CHARS)
+    safe_thread_name = _sanitize_for_fs(thread_name, _THREAD_NAME_MAX_CHARS)
+    return (
+        "---\n"
+        "type: bot-conversation\n"
+        f"when: {date_label}\n"
+        f"topic: [{safe_bot}, Discord]\n"
+        "---\n\n"
+        f"# {safe_thread_name}\n\n"
+    )
+
+
 def append_memo(
     memo_dir: str,
     bot_name: str,
@@ -112,11 +165,9 @@ def append_memo(
 ) -> Path | None:
     """Append one turn's memo entry to the day's file for this thread.
 
-    File path: ``<memo_dir>/YYYY-MM-DD_<bot_name>_<thread_idの下6桁>.md`` —
-    one file per thread per day. On first creation, writes Obsidian
-    frontmatter (``type: bot-conversation`` / ``when: YYYY-MM-DD`` /
-    ``topic: [<bot_name>, Discord]``) plus a heading with the thread name,
-    before the first entry.
+    File path and first-write header text come from memo_path() /
+    build_file_header() (see those for the naming scheme and header
+    contents).
 
     Never raises — any failure (missing/unwritable dir, permission error,
     etc.) is logged at WARNING and None is returned, so a memo failure never
@@ -124,28 +175,13 @@ def append_memo(
     contract as erabe_mask_ledger / the notify modules).
     """
     try:
-        date_label = now.strftime("%Y-%m-%d")
-        safe_bot = _sanitize_for_fs(bot_name, _BOT_NAME_MAX_CHARS)
-        thread_suffix = str(thread_id)[-6:]
-        filename = f"{date_label}_{safe_bot}_{thread_suffix}.md"
-
-        target_dir = Path(memo_dir)
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target_path = target_dir / filename
+        target_path = memo_path(memo_dir, bot_name, thread_id, now)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
 
         is_new_file = not target_path.exists()
         with target_path.open("a", encoding="utf-8") as f:
             if is_new_file:
-                safe_thread_name = _sanitize_for_fs(thread_name, _THREAD_NAME_MAX_CHARS)
-                frontmatter = (
-                    "---\n"
-                    "type: bot-conversation\n"
-                    f"when: {date_label}\n"
-                    f"topic: [{safe_bot}, Discord]\n"
-                    "---\n\n"
-                    f"# {safe_thread_name}\n\n"
-                )
-                f.write(frontmatter)
+                f.write(build_file_header(bot_name, thread_name, now))
             f.write(entry)
 
         return target_path
