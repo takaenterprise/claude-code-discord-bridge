@@ -14,10 +14,19 @@ AskView callbacks call ``ask_bus.post_answer(thread_id, labels)``; if the
 session is gone after a restart, post_answer returns False and the view shows
 a clear "session ended" message instead of silently failing.
 
-custom_id format:  ``ask_{thread_id}_{q_idx}_{slot}``
+custom_id format:  ``ask_{thread_id}_{q_idx}_{slot}[_{nonce}]``
   - slot = 0..3 for regular buttons
   - slot = ``select`` for the Select menu
   - slot = ``other`` for the free-text button
+  - nonce = per-question random token (omitted only for rows written before
+    nonces existed, so old messages keep resolving to their restored view)
+
+The nonce binds an answer to the exact question it was shown for.  Without it,
+two questions at the same index in the same thread share custom_ids, so a click
+on a pre-restart message could be filed as the answer to a later question
+(security audit run-2, 2026-09-17).  Restored views additionally set
+``restored=True`` and never post to the bus at all — they only report that the
+session ended.
 """
 
 from __future__ import annotations
@@ -72,6 +81,8 @@ class AskView(discord.ui.View):
         bus: AskAnswerBus | None = None,
         ask_repo: PendingAskRepository | None = None,
         allowed_user_ids: frozenset[int] | None = None,
+        nonce: str | None = None,
+        restored: bool = False,
     ) -> None:
         super().__init__(timeout=None)  # persistent — survives bot restarts
         self._thread_id = thread_id
@@ -79,7 +90,12 @@ class AskView(discord.ui.View):
         self._allowed_user_ids = allowed_user_ids
         self._bus = bus if bus is not None else _default_ask_bus
         self._ask_repo = ask_repo
+        self._nonce = nonce
+        # True when rebuilt from the DB after a restart: the session that asked
+        # the question is gone, so this view must never deliver an answer.
+        self._restored = restored
 
+        suffix = f"_{nonce}" if nonce else ""
         options = question.options
         use_select = question.multi_select or len(options) > 4
 
@@ -97,7 +113,7 @@ class AskView(discord.ui.View):
                     )
                     for opt in options[:25]
                 ],
-                custom_id=f"ask_{thread_id}_{q_idx}_select",
+                custom_id=f"ask_{thread_id}_{q_idx}_select{suffix}",
             )
             select.callback = self._select_callback
             self.add_item(select)
@@ -106,7 +122,7 @@ class AskView(discord.ui.View):
                 btn = discord.ui.Button(
                     label=opt.label[:80],
                     style=discord.ButtonStyle.primary,
-                    custom_id=f"ask_{thread_id}_{q_idx}_{i}",
+                    custom_id=f"ask_{thread_id}_{q_idx}_{i}{suffix}",
                     row=0,
                 )
                 btn.callback = _make_button_callback(self, opt.label)
@@ -115,7 +131,7 @@ class AskView(discord.ui.View):
         other_btn = discord.ui.Button(
             label="✏️ Other",
             style=discord.ButtonStyle.secondary,
-            custom_id=f"ask_{thread_id}_{q_idx}_other",
+            custom_id=f"ask_{thread_id}_{q_idx}_other{suffix}",
             row=1,
         )
         other_btn.callback = self._other_callback
@@ -150,9 +166,16 @@ class AskView(discord.ui.View):
         giving clear visual confirmation before Claude resumes.
 
         If the session is gone (bot restarted), an ephemeral error message is
-        sent and the stale DB entry is cleaned up.
+        sent and the stale DB entry is cleaned up.  A view that was *restored*
+        from the DB never posts to the bus at all: its session died with the
+        previous process, and a newer question may now be waiting on the same
+        thread.
         """
-        delivered = self._bus.post_answer(self._thread_id, values)
+        delivered = (
+            False
+            if self._restored
+            else self._bus.post_answer(self._thread_id, values, nonce=self._nonce)
+        )
         if delivered:
             label = ", ".join(values)
             await interaction.response.edit_message(
@@ -172,11 +195,22 @@ class AskView(discord.ui.View):
         await self._deliver(interaction, values)
 
     async def _other_callback(self, interaction: discord.Interaction) -> None:
+        if self._restored:
+            # Session died with the previous process — do not open the modal.
+            if self._ask_repo is not None:
+                await self._ask_repo.delete(self._thread_id)
+            await interaction.response.send_message(_RESTART_MSG, ephemeral=True)
+            self.stop()
+            return
         modal = AskModal(title="Your answer")
         await interaction.response.send_modal(modal)
         timed_out = await modal.wait()
         if not timed_out and modal.answer:
-            delivered = self._bus.post_answer(self._thread_id, [modal.answer])
+            delivered = (
+                False
+                if self._restored
+                else self._bus.post_answer(self._thread_id, [modal.answer], nonce=self._nonce)
+            )
             if not delivered:
                 if self._ask_repo is not None:
                     await self._ask_repo.delete(self._thread_id)

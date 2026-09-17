@@ -197,8 +197,20 @@ class ClaudeDiscordBot(commands.Bot):
                     bus=ask_bus,
                     ask_repo=self.ask_repo,
                     allowed_user_ids=resolve_allowed_user_ids(self),
+                    nonce=record.nonce,
+                    # The session that asked this question died with the previous
+                    # process.  A restored view must never deliver an answer —
+                    # a newer question may now be waiting on the same thread.
+                    restored=True,
                 )
-                self.add_view(view)
+                # Register against the original message when we know it, so the
+                # view does not become discord.py's message_id=None fallback for
+                # any click whose custom_id happens to match.
+                message_id = getattr(record, "message_id", None)
+                if isinstance(message_id, int):
+                    self.add_view(view, message_id=message_id)
+                else:
+                    self.add_view(view)
                 logger.debug(
                     "Restored AskView for thread %d q_idx=%d",
                     record.thread_id,
