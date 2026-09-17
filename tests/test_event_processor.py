@@ -757,3 +757,167 @@ class TestTodoWrite:
         await p.process(self._make_todo_event())
 
         assert p._state.todo_message is None
+
+
+class TestEmptyReplyNotice:
+    """Runs that end without answer text must not leave the thread silent."""
+
+    @staticmethod
+    def _texts(thread: MagicMock) -> list[str]:
+        return [
+            c.args[0] for c in thread.send.call_args_list if c.args and isinstance(c.args[0], str)
+        ]
+
+    @pytest.mark.asyncio
+    async def test_empty_result_posts_notice(self, thread: MagicMock, runner: MagicMock) -> None:
+        from claude_discord.cogs.event_processor import EMPTY_REPLY_NOTICE
+
+        p = EventProcessor(_make_config(thread, runner))
+        await p.process(_make_result_event(session_id="s1"))
+
+        assert EMPTY_REPLY_NOTICE in self._texts(thread)
+        assert p.result_text is None
+
+    @pytest.mark.asyncio
+    async def test_placeholder_result_is_hidden_and_notice_posted(
+        self, thread: MagicMock, runner: MagicMock
+    ) -> None:
+        from claude_discord.cogs.event_processor import EMPTY_REPLY_NOTICE
+
+        p = EventProcessor(_make_config(thread, runner))
+        await p.process(_make_result_event(text="No response requested.", session_id="s1"))
+
+        texts = self._texts(thread)
+        assert "No response requested." not in texts
+        assert EMPTY_REPLY_NOTICE in texts
+        assert p.result_text is None
+
+    @pytest.mark.asyncio
+    async def test_placeholder_assistant_text_is_not_posted(
+        self, thread: MagicMock, runner: MagicMock
+    ) -> None:
+        from claude_discord.cogs.event_processor import EMPTY_REPLY_NOTICE
+
+        p = EventProcessor(_make_config(thread, runner))
+        await p.process(
+            StreamEvent(
+                message_type=MessageType.ASSISTANT, text="No response requested.", is_partial=False
+            )
+        )
+        await p.process(_make_result_event(text="No response requested.", session_id="s1"))
+
+        texts = self._texts(thread)
+        assert "No response requested." not in texts
+        assert texts.count(EMPTY_REPLY_NOTICE) == 1
+
+    @pytest.mark.asyncio
+    async def test_real_answer_gets_no_notice(self, thread: MagicMock, runner: MagicMock) -> None:
+        from claude_discord.cogs.event_processor import EMPTY_REPLY_NOTICE
+
+        p = EventProcessor(_make_config(thread, runner))
+        await p.process(
+            StreamEvent(message_type=MessageType.ASSISTANT, text="Answer.", is_partial=False)
+        )
+        await p.process(_make_result_event(text="Answer.", session_id="s1"))
+
+        assert EMPTY_REPLY_NOTICE not in self._texts(thread)
+
+    @pytest.mark.asyncio
+    async def test_result_only_answer_gets_no_notice(
+        self, thread: MagicMock, runner: MagicMock
+    ) -> None:
+        from claude_discord.cogs.event_processor import EMPTY_REPLY_NOTICE
+
+        p = EventProcessor(_make_config(thread, runner))
+        await p.process(_make_result_event(text="Answer.", session_id="s1"))
+
+        texts = self._texts(thread)
+        assert "Answer." in texts
+        assert EMPTY_REPLY_NOTICE not in texts
+
+    @pytest.mark.asyncio
+    async def test_streamed_partial_answer_gets_no_notice(
+        self, thread: MagicMock, runner: MagicMock
+    ) -> None:
+        from claude_discord.cogs.event_processor import EMPTY_REPLY_NOTICE
+
+        p = EventProcessor(_make_config(thread, runner))
+        await p.process(
+            StreamEvent(message_type=MessageType.ASSISTANT, text="Partial answer", is_partial=True)
+        )
+        await p.process(_make_result_event(session_id="s1"))
+
+        assert EMPTY_REPLY_NOTICE not in self._texts(thread)
+
+    @pytest.mark.asyncio
+    async def test_error_result_gets_no_empty_notice(
+        self, thread: MagicMock, runner: MagicMock
+    ) -> None:
+        from claude_discord.cogs.event_processor import EMPTY_REPLY_NOTICE
+
+        p = EventProcessor(_make_config(thread, runner))
+        await p.process(
+            StreamEvent(message_type=MessageType.RESULT, is_complete=True, error="boom")
+        )
+
+        assert EMPTY_REPLY_NOTICE not in self._texts(thread)
+
+
+class TestLongContextNotice:
+    """A hint to move to a new thread once the prompt context gets large."""
+
+    @staticmethod
+    def _hints(thread: MagicMock) -> list[str]:
+        return [
+            c.args[0]
+            for c in thread.send.call_args_list
+            if c.args and isinstance(c.args[0], str) and "会話が長くなっています" in c.args[0]
+        ]
+
+    @pytest.mark.asyncio
+    async def test_large_context_posts_hint(
+        self, thread: MagicMock, runner: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CCDB_LONG_CONTEXT_WARN_TOKENS", raising=False)
+        p = EventProcessor(_make_config(thread, runner))
+        await p.process(
+            _make_result_event(
+                text="Answer.",
+                input_tokens=10,
+                output_tokens=5,
+                cache_read_tokens=474_000,
+                cache_creation_tokens=752,
+            )
+        )
+
+        hints = self._hints(thread)
+        assert len(hints) == 1
+        assert "約47万トークン" in hints[0]
+
+    @pytest.mark.asyncio
+    async def test_small_context_posts_no_hint(
+        self, thread: MagicMock, runner: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("CCDB_LONG_CONTEXT_WARN_TOKENS", raising=False)
+        p = EventProcessor(_make_config(thread, runner))
+        await p.process(
+            _make_result_event(
+                text="Answer.", input_tokens=10, output_tokens=5, cache_read_tokens=60_000
+            )
+        )
+
+        assert self._hints(thread) == []
+
+    @pytest.mark.asyncio
+    async def test_hint_disabled_with_zero(
+        self, thread: MagicMock, runner: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("CCDB_LONG_CONTEXT_WARN_TOKENS", "0")
+        p = EventProcessor(_make_config(thread, runner))
+        await p.process(
+            _make_result_event(
+                text="Answer.", input_tokens=10, output_tokens=5, cache_read_tokens=900_000
+            )
+        )
+
+        assert self._hints(thread) == []
