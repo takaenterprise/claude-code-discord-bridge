@@ -8,11 +8,12 @@ messages keep working rather than showing Discord's generic "Interaction Failed"
 
 Answer routing uses :mod:`ask_bus` (an in-process asyncio.Queue per thread).
 The waiting side (``_collect_ask_answers`` in _run_helper.py) calls
-``ask_bus.register(thread_id)`` and awaits ``queue.get()`` with a 24-hour
-timeout instead of the old 5-minute hard limit.
-AskView callbacks call ``ask_bus.post_answer(thread_id, labels)``; if the
-session is gone after a restart, post_answer returns False and the view shows
-a clear "session ended" message instead of silently failing.
+``ask_bus.register(thread_id, nonce)`` and awaits ``queue.get()`` with a
+24-hour timeout instead of the old 5-minute hard limit.
+AskView callbacks call ``ask_bus.post_answer(thread_id, labels, nonce)``; if
+the session is gone after a restart, or the nonce belongs to a different
+question, post_answer returns False and the view shows a clear "session ended"
+message instead of silently failing.
 
 custom_id format:  ``ask_{thread_id}_{q_idx}_{slot}[_{nonce}]``
   - slot = 0..3 for regular buttons

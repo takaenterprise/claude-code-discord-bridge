@@ -158,10 +158,12 @@ class ClaudeDiscordBot(commands.Bot):
         """Re-register persistent AskViews for questions pending before restart.
 
         For each pending ask found in the DB, we create an AskView and call
-        ``bot.add_view()`` so discord.py can route button clicks to it.  When
-        clicked, the view tries ``ask_bus.post_answer()`` which returns False
-        (no live session), so it sends an ephemeral "session ended" message and
-        cleans up the DB entry.
+        ``bot.add_view()`` so discord.py can route button clicks to it.  The
+        restored view is marked ``restored=True``: it never posts to
+        ``ask_bus``, and only sends an ephemeral "session ended" message and
+        cleans up the DB entry.  Posting would be unsafe, because a *newer*
+        question may already be waiting on the same thread — that mis-binding
+        is the finding this flag closes (security audit run-2, 2026-09-17).
         """
         if self.ask_repo is None:
             return
