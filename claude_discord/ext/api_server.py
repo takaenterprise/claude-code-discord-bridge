@@ -13,10 +13,11 @@ Security:
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -35,6 +36,17 @@ if TYPE_CHECKING:
     from ..database.usage_repo import UsageRepository
 
 logger = logging.getLogger(__name__)
+
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _hostname(host_header: str) -> str:
+    """Hostname part of a Host header value (``[::1]:8080`` -> ``::1``)."""
+    host_header = host_header.strip().lower()
+    if host_header.startswith("["):
+        return host_header[1:].split("]", 1)[0]
+    return host_header.rsplit(":", 1)[0] if host_header.count(":") == 1 else host_header
 
 
 class ApiServer:
@@ -68,6 +80,7 @@ class ApiServer:
         session_repo: SessionRepository | None = None,
         board_repo: BoardRepository | None = None,
         usage_repo: UsageRepository | None = None,
+        trusted_origins: Iterable[str] | None = None,
     ) -> None:
         self.repo = repo
         self.bot = bot
@@ -75,6 +88,9 @@ class ApiServer:
         self.host = host
         self.port = port
         self.api_secret = api_secret
+        # Browser origins allowed to call the API. Empty by default: any request
+        # carrying an Origin header (i.e. sent by a web page) is rejected.
+        self.trusted_origins: frozenset[str] = frozenset(trusted_origins or ())
         self.task_repo = task_repo
         self.lounge_repo = lounge_repo
         self.resume_repo = resume_repo
@@ -88,6 +104,9 @@ class ApiServer:
         self.lounge_channel_id = lounge_channel_id
 
         self.app = web.Application()
+        # Always on: blocks web pages (cross-site POST, DNS rebinding) from driving
+        # the API even when no api_secret is configured.
+        self.app.middlewares.append(self._local_request_guard)
         if self.api_secret:
             self.app.middlewares.append(self._auth_middleware)
         self._setup_routes()
@@ -139,6 +158,33 @@ class ApiServer:
         self.app.router.add_delete("/api/board/{id}", self.delete_board_item)
 
     @web.middleware
+    async def _local_request_guard(
+        self,
+        request: web.Request,
+        handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
+    ) -> web.StreamResponse:
+        """Reject requests that a web browser could send on a user's behalf.
+
+        - ``Origin`` header present: browsers attach it to cross-site POST/PUT/
+          DELETE (including ``no-cors`` text/plain requests that skip CORS
+          preflight). Scripts, curl and Claude sessions do not send it.
+        - Non-loopback ``Host`` while bound to loopback: a DNS-rebinding page
+          reaches 127.0.0.1 under its own host name, which this rejects.
+        """
+        origin = request.headers.get("Origin")
+        if origin is not None and origin not in self.trusted_origins:
+            logger.warning("API request rejected: untrusted Origin %r %s", origin, request.path)
+            return web.json_response({"error": "Forbidden origin"}, status=403)
+
+        if self.host in _LOOPBACK_HOSTS and _hostname(request.host) not in _LOOPBACK_HOSTS:
+            logger.warning(
+                "API request rejected: non-loopback Host %r %s", request.host, request.path
+            )
+            return web.json_response({"error": "Forbidden host"}, status=403)
+
+        return await handler(request)
+
+    @web.middleware
     async def _auth_middleware(
         self,
         request: web.Request,
@@ -153,7 +199,7 @@ class ApiServer:
             return web.json_response({"error": "Missing Authorization header"}, status=401)
 
         token = auth_header[7:]
-        if token != self.api_secret:
+        if not hmac.compare_digest(token.encode(), (self.api_secret or "").encode()):
             return web.json_response({"error": "Invalid token"}, status=401)
 
         return await handler(request)

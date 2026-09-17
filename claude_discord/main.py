@@ -281,6 +281,11 @@ async def main() -> None:
     # API server (optional — enables push notifications, lounge, etc.)
     api_server = None
     api_port_str = os.getenv("API_PORT", "8080")
+    # Optional Bearer token for the REST API. When set, every caller except
+    # /api/health must send "Authorization: Bearer <token>"; Claude sessions
+    # receive it as CCDB_API_SECRET. Unset keeps the API open to local callers
+    # (browser-originated requests are still rejected by ApiServer).
+    api_secret = os.getenv("API_SECRET_KEY") or None
     try:
         from .database.notification_repo import NotificationRepository
         from .ext.api_server import ApiServer
@@ -293,10 +298,12 @@ async def main() -> None:
             bot=bot,
             default_channel_id=int(config["channel_id"]),
             port=int(api_port_str),
+            api_secret=api_secret,
             lounge_repo=lounge_repo,
             session_repo=repo,
         )
         runner.api_port = int(api_port_str)
+        runner.api_secret = api_secret
     except Exception:
         logger.warning("API server setup failed — continuing without it", exc_info=True)
 

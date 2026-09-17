@@ -34,6 +34,7 @@ _LOUNGE_INVITE = """\
 ```bash
 curl -s -X POST "$CCDB_API_URL/api/lounge" \\
   -H "Content-Type: application/json" \\
+  ${CCDB_API_SECRET:+-H "Authorization: Bearer $CCDB_API_SECRET"} \\
   -d '{"message": "ここに一言", "label": "自分のニックネーム"}'
 ```
 
