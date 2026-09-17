@@ -570,6 +570,9 @@ class ApiServer:
                     {
                         "id": m.id,
                         "label": m.label,
+                        # The label is self-declared; only `origin` is server-known.
+                        "label_verified": False,
+                        "origin": m.origin,
                         "message": m.message,
                         "posted_at": m.posted_at,
                     }
@@ -600,24 +603,41 @@ class ApiServer:
         if not message:
             return web.json_response({"error": "message is required"}, status=400)
 
+        # The label is free text chosen by the caller and is NOT verified: this
+        # route has no per-caller identity (see the audit note on api_secret).
+        # `origin` is the only writer fact the server knows, so it is recorded
+        # alongside and rendered next to the self-declared label.
         label = str(data.get("label", "AI")).strip() or "AI"
+        origin = self._lounge_origin()
 
-        stored = await self.lounge_repo.post(message=message, label=label)  # type: ignore[union-attr]
+        stored = await self.lounge_repo.post(  # type: ignore[union-attr]
+            message=message, label=label, origin=origin
+        )
 
         # Forward to Discord lounge channel if configured
         if self.lounge_channel_id:
-            await self._send_lounge_to_discord(stored.label, stored.message, stored.posted_at)
+            await self._send_lounge_to_discord(
+                stored.label, stored.message, stored.posted_at, stored.origin
+            )
 
         return web.json_response(
             {
                 "status": "posted",
                 "id": stored.id,
                 "label": stored.label,
+                "label_verified": False,
+                "origin": stored.origin,
                 "message": stored.message,
                 "posted_at": stored.posted_at,
             },
             status=201,
         )
+
+    def _lounge_origin(self) -> str:
+        """Return the server-known provenance string for a /api/lounge write."""
+        bot_user = getattr(self.bot, "user", None)
+        name = getattr(bot_user, "name", None)
+        return f"api@{name}" if isinstance(name, str) and name else "api"
 
     # ------------------------------------------------------------------
     # Session spawn endpoint (/api/spawn)
@@ -800,15 +820,23 @@ class ApiServer:
         )
         return web.json_response({"status": "marked", "id": row_id}, status=201)
 
-    async def _send_lounge_to_discord(self, label: str, message: str, posted_at: str) -> None:
-        """Send a lounge message to the configured Discord lounge channel."""
+    async def _send_lounge_to_discord(
+        self, label: str, message: str, posted_at: str, origin: str = "api"
+    ) -> None:
+        """Send a lounge message to the configured Discord lounge channel.
+
+        The label is rendered as self-declared (自称) with the server-known
+        origin next to it, so readers never mistake it for a verified identity.
+        """
         try:
             channel = self.bot.get_channel(self.lounge_channel_id)  # type: ignore[arg-type]
             if channel is None:
                 channel = await self.bot.fetch_channel(self.lounge_channel_id)  # type: ignore[arg-type]
             if hasattr(channel, "send"):
                 timestamp = posted_at[11:16] if len(posted_at) >= 16 else posted_at
-                await channel.send(f"**[{label}]** {message} *({timestamp})*")  # type: ignore[union-attr]
+                await channel.send(  # type: ignore[union-attr]
+                    f"**[自称: {label}]** ({origin}・未検証) {message} *({timestamp})*"
+                )
         except Exception:
             logger.warning("Failed to forward lounge message to Discord", exc_info=True)
 

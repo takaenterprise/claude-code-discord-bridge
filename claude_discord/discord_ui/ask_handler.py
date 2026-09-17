@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import secrets
 
 import discord
 
@@ -61,6 +62,12 @@ async def collect_ask_answers(
 
     parts: list[str] = []
     for q_idx, q in enumerate(questions):
+        # Bind this question's buttons and its bus waiter to one random token.
+        # Two questions at the same index in the same thread would otherwise
+        # share custom_ids, so a click on a pre-restart message could be filed
+        # as the answer to a later question (security audit run-2).
+        nonce = secrets.token_hex(8)
+
         # Persist so on_ready can re-register the view after a bot restart.
         if ask_repo is not None:
             await ask_repo.save(
@@ -68,11 +75,12 @@ async def collect_ask_answers(
                 session_id=session_id,
                 questions=questions_dicts,
                 question_idx=q_idx,
+                nonce=nonce,
             )
 
         # Register a waiter in the bus before showing the view so there is no
         # race between the user clicking and the queue being registered.
-        answer_queue = _ask_bus.register(thread.id)
+        answer_queue = _ask_bus.register(thread.id, nonce=nonce)
 
         view = AskView(
             q,
@@ -80,8 +88,13 @@ async def collect_ask_answers(
             q_idx=q_idx,
             ask_repo=ask_repo,
             allowed_user_ids=allowed_user_ids,
+            nonce=nonce,
         )
         msg = await thread.send(embed=ask_embed(q.question, q.header), view=view)
+        if ask_repo is not None:
+            message_id = getattr(msg, "id", None)
+            if isinstance(message_id, int):
+                await ask_repo.update_message_id(thread.id, message_id)
 
         try:
             selected = await asyncio.wait_for(answer_queue.get(), timeout=ASK_ANSWER_TIMEOUT)

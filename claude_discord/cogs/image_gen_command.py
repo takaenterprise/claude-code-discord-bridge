@@ -26,6 +26,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from ..authz import InvokerBoundView
+
 if TYPE_CHECKING:
     pass
 
@@ -43,11 +45,18 @@ COLOR_CONFIRM = 0xFFA500  # オレンジ（確認待ち）
 _ANIMAL_EMOJI = {"犬": "🐕", "猫": "🐈", "鳥": "🐦", "魚": "🐠", "小動物": "🐹", "爬虫類": "🦎"}
 
 
-class MangaConfirmView(discord.ui.View):
-    """漫画LP生成の動物確認ダイアログ（ドロップダウン + ボタン）"""
+class MangaConfirmView(InvokerBoundView):
+    """漫画LP生成の動物確認ダイアログ（ドロップダウン + ボタン）
 
-    def __init__(self) -> None:
-        super().__init__(timeout=300)
+    確認メッセージは公開投稿なので、discord.py はチャンネルを見られる誰の
+    クリックも ViewStore へ流す（スラッシュコマンドの関所は通らない）。
+    ``InvokerBoundView`` により /manga を実行した本人だけが動物指定・確定・
+    取消を行える（OrderConfirmView / ListingConfirmView と同じ形）。
+    ``invoker_id=None`` の場合は従来どおり許可リストのみで判定する。
+    """
+
+    def __init__(self, invoker_id: int | None = None) -> None:
+        super().__init__(timeout=300, invoker_id=invoker_id)
         self.result: str | None = None  # "confirm" | "cancel"
         self.animal_override: str | None = None
 
@@ -451,7 +460,7 @@ class ImageGenCommandCog(commands.Cog):
         )
 
         # Step 4: ボタン＋ドロップダウン表示
-        view = MangaConfirmView()
+        view = MangaConfirmView(invoker_id=interaction.user.id)
         msg = await interaction.followup.send(embed=embed, view=view, wait=True)
 
         # Step 5: ユーザーの応答を待つ（5分タイムアウト）

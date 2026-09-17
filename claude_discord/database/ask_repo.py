@@ -26,6 +26,11 @@ class PendingAskRecord:
     questions_json: str  # JSON-serialised list[dict]
     question_idx: int
     created_at: str
+    #: Per-question random token that binds an answer to its question.
+    #: ``None`` for rows written before nonces existed.
+    nonce: str | None = None
+    #: Discord message the buttons were posted on. ``None`` for older rows.
+    message_id: int | None = None
 
     def questions(self) -> list[dict[str, Any]]:
         return json.loads(self.questions_json)  # type: ignore[no-any-return]
@@ -43,16 +48,25 @@ class PendingAskRepository:
         session_id: str,
         questions: list[dict[str, Any]],
         question_idx: int = 0,
+        nonce: str | None = None,
+        message_id: int | None = None,
     ) -> None:
         """Insert or replace the pending ask for *thread_id*."""
         async with aiosqlite.connect(self._db_path) as db:
             await db.execute(
                 """
                 INSERT OR REPLACE INTO pending_asks
-                    (thread_id, session_id, questions_json, question_idx)
-                VALUES (?, ?, ?, ?)
+                    (thread_id, session_id, questions_json, question_idx, nonce, message_id)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (thread_id, session_id, json.dumps(questions), question_idx),
+                (
+                    thread_id,
+                    session_id,
+                    json.dumps(questions),
+                    question_idx,
+                    nonce,
+                    message_id,
+                ),
             )
             await db.commit()
         logger.debug(
@@ -66,8 +80,8 @@ class PendingAskRepository:
         async with (
             aiosqlite.connect(self._db_path) as db,
             db.execute(
-                "SELECT thread_id, session_id, questions_json, question_idx, created_at "
-                "FROM pending_asks WHERE thread_id = ?",
+                "SELECT thread_id, session_id, questions_json, question_idx, created_at, "
+                "nonce, message_id FROM pending_asks WHERE thread_id = ?",
                 (thread_id,),
             ) as cursor,
         ):
@@ -80,7 +94,23 @@ class PendingAskRepository:
             questions_json=row[2],
             question_idx=row[3],
             created_at=row[4],
+            nonce=row[5],
+            message_id=row[6],
         )
+
+    async def update_message_id(self, thread_id: int, message_id: int) -> None:
+        """Record which Discord message carries the buttons for *thread_id*.
+
+        Called right after ``thread.send()`` returns, so a restored view can be
+        registered against that exact message instead of becoming discord.py's
+        ``message_id=None`` catch-all fallback.
+        """
+        async with aiosqlite.connect(self._db_path) as db:
+            await db.execute(
+                "UPDATE pending_asks SET message_id = ? WHERE thread_id = ?",
+                (message_id, thread_id),
+            )
+            await db.commit()
 
     async def delete(self, thread_id: int) -> None:
         """Remove the pending ask for *thread_id* (called after answer received)."""
@@ -94,8 +124,8 @@ class PendingAskRepository:
         async with (
             aiosqlite.connect(self._db_path) as db,
             db.execute(
-                "SELECT thread_id, session_id, questions_json, question_idx, created_at "
-                "FROM pending_asks ORDER BY created_at"
+                "SELECT thread_id, session_id, questions_json, question_idx, created_at, "
+                "nonce, message_id FROM pending_asks ORDER BY created_at"
             ) as cursor,
         ):
             rows = await cursor.fetchall()
@@ -106,6 +136,8 @@ class PendingAskRepository:
                 questions_json=row[2],
                 question_idx=row[3],
                 created_at=row[4],
+                nonce=row[5],
+                message_id=row[6],
             )
             for row in rows
         ]

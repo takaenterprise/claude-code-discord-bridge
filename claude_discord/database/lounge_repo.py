@@ -26,12 +26,20 @@ _MAX_STORED_MESSAGES = 200
 
 @dataclass
 class LoungeMessage:
-    """A single AI Lounge message."""
+    """A single AI Lounge message.
+
+    ``label`` is free text chosen by whoever posted the row — the server does
+    not verify it, so anyone can write "owner".  ``origin`` is the only
+    writer information the server knows for certain (which route the row came
+    in through, and which bot received it).  Renderers must present the label
+    as self-declared and show the origin next to it.
+    """
 
     id: int
     label: str
     message: str
     posted_at: str  # ISO datetime string (localtime)
+    origin: str = "api"  # server-determined provenance, e.g. "api" / "api@bot1"
 
 
 class LoungeRepository:
@@ -44,26 +52,30 @@ class LoungeRepository:
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
 
-    async def post(self, message: str, label: str = "AI") -> LoungeMessage:
+    async def post(self, message: str, label: str = "AI", origin: str = "api") -> LoungeMessage:
         """Insert a new lounge message and return it.
+
+        ``origin`` must be supplied by the server (never taken from the request
+        body): it records how the row arrived, since ``label`` is unverified.
 
         Prunes messages exceeding _MAX_STORED_MESSAGES after insert.
         """
         label = (label or "AI")[:50]  # safety cap
         message = (message or "")[:1000]  # safety cap
+        origin = (origin or "api")[:50]
 
         async with aiosqlite.connect(self._db_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
-                "INSERT INTO lounge_messages (label, message) VALUES (?, ?)",
-                (label, message),
+                "INSERT INTO lounge_messages (label, message, origin) VALUES (?, ?, ?)",
+                (label, message, origin),
             )
             row_id = cursor.lastrowid
             await db.commit()
 
             # Fetch the inserted row (to get server-generated posted_at)
             cur = await db.execute(
-                "SELECT id, label, message, posted_at FROM lounge_messages WHERE id = ?",
+                "SELECT id, label, message, origin, posted_at FROM lounge_messages WHERE id = ?",
                 (row_id,),
             )
             row = await cur.fetchone()
@@ -84,8 +96,14 @@ class LoungeRepository:
             label=row["label"],
             message=row["message"],
             posted_at=row["posted_at"],
+            origin=row["origin"],
         )
-        logger.info("Lounge message posted by %r (id=%d)", label, result.id)
+        logger.info(
+            "Lounge message posted with self-declared label %r via %s (id=%d)",
+            label,
+            origin,
+            result.id,
+        )
         return result
 
     async def get_recent(self, limit: int = 10) -> list[LoungeMessage]:
@@ -98,8 +116,8 @@ class LoungeRepository:
             db.row_factory = aiosqlite.Row
             # Pick the N newest via subquery, then sort ascending for display
             rows = await db.execute_fetchall(
-                "SELECT id, label, message, posted_at FROM ("
-                "  SELECT id, label, message, posted_at FROM lounge_messages"
+                "SELECT id, label, message, origin, posted_at FROM ("
+                "  SELECT id, label, message, origin, posted_at FROM lounge_messages"
                 "  ORDER BY id DESC LIMIT ?"
                 ") ORDER BY id ASC",
                 (limit,),
@@ -111,6 +129,7 @@ class LoungeRepository:
                 label=row["label"],
                 message=row["message"],
                 posted_at=row["posted_at"],
+                origin=row["origin"],
             )
             for row in rows
         ]

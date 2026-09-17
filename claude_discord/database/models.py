@@ -34,6 +34,12 @@ CREATE TABLE IF NOT EXISTS pending_asks (
     session_id TEXT NOT NULL,
     questions_json TEXT NOT NULL,
     question_idx INTEGER NOT NULL DEFAULT 0,
+    -- Per-question random token. Binds an answer to the question it was shown
+    -- for, so a click on a pre-restart message cannot answer a later question.
+    nonce TEXT,
+    -- Discord message the buttons were posted on, so restored views can be
+    -- registered against that message id instead of the catch-all fallback.
+    message_id INTEGER,
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
@@ -41,6 +47,9 @@ CREATE TABLE IF NOT EXISTS lounge_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     label TEXT NOT NULL DEFAULT 'AI',
     message TEXT NOT NULL,
+    -- Server-determined provenance of the row (e.g. 'api'). The label above is
+    -- free text chosen by the writer and must be shown as self-declared.
+    origin TEXT NOT NULL DEFAULT 'api',
     posted_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
@@ -168,6 +177,14 @@ _MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_usage_user ON usage_records(discord_user_id)",
     "CREATE INDEX IF NOT EXISTS idx_usage_date ON usage_records(created_at)",
     "CREATE INDEX IF NOT EXISTS idx_usage_bot ON usage_records(bot_name)",
+    # AskUserQuestion answer binding (security audit run-2, 2026-09-17).
+    # Existing rows get NULL and keep working: a NULL nonce means "no nonce in
+    # the custom_id", and a NULL message_id means the restored view is
+    # registered without one, exactly as before.
+    "ALTER TABLE pending_asks ADD COLUMN nonce TEXT",
+    "ALTER TABLE pending_asks ADD COLUMN message_id INTEGER",
+    # Lounge provenance (security audit run-2) — server-known, unlike `label`.
+    "ALTER TABLE lounge_messages ADD COLUMN origin TEXT NOT NULL DEFAULT 'api'",
 ]
 
 

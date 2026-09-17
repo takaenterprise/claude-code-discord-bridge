@@ -7,17 +7,24 @@ import logging
 
 import discord
 
+from ..authz import GatedView
 from ..claude.runner import ClaudeRunner
 from .embeds import stopped_embed, tool_result_embed, tool_result_preview_embed
 
 logger = logging.getLogger(__name__)
 
 
-class StopView(discord.ui.View):
+class StopView(GatedView):
     """A ⏹ Stop button attached to the session status message.
 
     Clicking it sends SIGINT to the active Claude runner (graceful interrupt,
     like pressing Escape in Claude Code) and posts a stopped_embed.
+
+    The button is posted in a public thread, and discord.py delivers component
+    clicks straight to the ViewStore without consulting ``GatedCommandTree``.
+    :class:`~claude_discord.authz.GatedView` therefore applies the same
+    principal set as ``/stop`` (``allowed_user_ids ∪ owner``, unrestricted when
+    neither is configured) before ``stop_button`` can interrupt the session.
 
     After the session ends — either via the button or naturally — call
     ``disable()`` to deactivate the button on the status message.
