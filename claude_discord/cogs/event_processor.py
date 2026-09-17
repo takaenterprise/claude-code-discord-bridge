@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 
 from ..claude.types import AskQuestion, MessageType, SessionState, StreamEvent
 from ..discord_ui.chunker import chunk_message
@@ -42,6 +43,41 @@ logger = logging.getLogger(__name__)
 _TOOL_RESULT_MAX_CHARS = 3000
 # Lines of output shown before the "展開 ▼" button appears.
 _COLLAPSED_LINES = 3
+
+# Text the Claude Code CLI writes by itself (a ``<synthetic>`` assistant message)
+# when the model ends a turn with no visible output even after the CLI's own
+# "no visible output" nudge.  It is not an answer, so it must not count as one.
+_PLACEHOLDER_REPLIES = frozenset({"No response requested."})
+
+# Posted when a run completes without any real answer text, so the user is not
+# left waiting in silence (2026-09-17: a bot2 thread went quiet this way 10 times).
+EMPTY_REPLY_NOTICE = (
+    "\u26a0\ufe0f **空返事でした** \u2014 AIが返事の文章を出さずに終わりました。"
+    "もう一度送ってください。続くようなら、新しいスレッドで再開してください。"
+)
+
+# Context size (prompt tokens) above which a "start a new thread" hint is posted.
+# Empty replies clustered in sessions of 128k\u2013475k tokens. 0 disables the hint.
+_LONG_CONTEXT_WARN_TOKENS_DEFAULT = 200_000
+
+
+def _is_placeholder(text: str | None) -> bool:
+    return text is not None and text.strip() in _PLACEHOLDER_REPLIES
+
+
+def _long_context_warn_tokens() -> int:
+    raw = os.getenv("CCDB_LONG_CONTEXT_WARN_TOKENS", "")
+    try:
+        return int(raw) if raw.strip() else _LONG_CONTEXT_WARN_TOKENS_DEFAULT
+    except ValueError:
+        return _LONG_CONTEXT_WARN_TOKENS_DEFAULT
+
+
+def long_context_notice(context_used: int) -> str:
+    return (
+        f"-# \U0001f4cf 会話が長くなっています（約{context_used / 10_000:.0f}万トークン）。"
+        "空返事が出やすくなるので、区切りの良い所で新しいスレッドへ移るのがおすすめです。"
+    )
 
 
 def _truncate_result(content: str) -> str:
@@ -101,6 +137,8 @@ class EventProcessor:
         # by the bot-memo bridge (記憶橋) to record what Claude actually
         # answered, independent of what was already streamed to Discord.
         self._result_text: str | None = None
+        # True once real answer text (not a CLI placeholder) reached Discord.
+        self._answer_text_sent: bool = False
 
     # ------------------------------------------------------------------
     # Public properties
@@ -238,6 +276,8 @@ class EventProcessor:
 
         # ExitPlanMode — show plan embed with Approve/Cancel buttons.
         if event.is_plan_approval and not event.is_partial:
+            # The plan embed is the answer for this turn.
+            self._answer_text_sent = True
             await self._handle_plan_approval(event)
 
         # AskUserQuestion — set pending and signal caller to interrupt runner.
@@ -292,8 +332,10 @@ class EventProcessor:
 
         # Finalize any in-progress streaming message.
         if self._streamer.has_content:
-            await self._streamer.finalize()
+            streamed = await self._streamer.finalize()
             self._assistant_text_sent = True
+            if not _is_placeholder(streamed):
+                self._answer_text_sent = True
 
         if event.error:
             await self._config.thread.send(embed=_make_error_embed(event.error))
@@ -301,11 +343,20 @@ class EventProcessor:
                 await self._config.status.set_error()
         else:
             # Post final result text only if no assistant text was already sent.
-            response_text = event.text
+            response_text = None if _is_placeholder(event.text) else event.text
             self._result_text = response_text or None
             if response_text and not self._assistant_text_sent:
                 for chunk in chunk_message(response_text):
                     await self._config.thread.send(chunk)
+                self._answer_text_sent = True
+            if not self._answer_text_sent:
+                logger.warning(
+                    "Run completed without answer text (thread=%d, session=%s)",
+                    self._config.thread.id,
+                    event.session_id or self._state.session_id,
+                )
+                with contextlib.suppress(Exception):
+                    await self._config.thread.send(EMPTY_REPLY_NOTICE)
 
             await self._config.thread.send(
                 embed=session_complete_embed(
@@ -320,6 +371,16 @@ class EventProcessor:
             )
             if self._config.status:
                 await self._config.status.set_done()
+            warn_at = _long_context_warn_tokens()
+            if warn_at > 0 and event.input_tokens is not None:
+                context_used = (
+                    event.input_tokens
+                    + (event.cache_read_tokens or 0)
+                    + (event.cache_creation_tokens or 0)
+                )
+                if context_used >= warn_at:
+                    with contextlib.suppress(Exception):
+                        await self._config.thread.send(long_context_notice(context_used))
 
         if event.session_id:
             if self._config.repo:
@@ -371,6 +432,10 @@ class EventProcessor:
                     await self._streamer.append(delta)
                 await self._streamer.finalize()
                 self._streamer = StreamingMessageManager(self._config.thread)
+            elif _is_placeholder(event.text):
+                # CLI placeholder, not an answer — keep it out of the thread.
+                self._state.partial_text = ""
+                return
             else:
                 # No partial events arrived — post the full text directly.
                 for chunk in chunk_message(event.text):
@@ -378,6 +443,8 @@ class EventProcessor:
             self._state.partial_text = ""
             self._state.accumulated_text = event.text
             self._assistant_text_sent = True
+            if not _is_placeholder(event.text):
+                self._answer_text_sent = True
             await self._bump_stop()
 
     async def _handle_tool_use(self, event: StreamEvent) -> None:
