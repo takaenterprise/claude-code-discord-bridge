@@ -164,6 +164,9 @@ async def setup_bridge(
     # Attach repos to bot so generic cogs (e.g. AutoUpgradeCog) can discover them
     # without a hard import dependency on ccdb internals.
     bot.session_repo = session_repo  # type: ignore[attr-defined]
+    # Principal set for the command gate and AskUserQuestion answers (authz.py).
+    if getattr(bot, "allowed_user_ids", None) is None and allowed_user_ids is not None:
+        bot.allowed_user_ids = allowed_user_ids  # type: ignore[attr-defined]
     bot.resume_repo = resume_repo  # type: ignore[attr-defined]
 
     # --- ClaudeChatCog ---

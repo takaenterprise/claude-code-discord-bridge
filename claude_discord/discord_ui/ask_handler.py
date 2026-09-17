@@ -33,6 +33,7 @@ async def collect_ask_answers(
     questions: list[AskQuestion],
     session_id: str,
     ask_repo: PendingAskRepository | None = None,
+    allowed_user_ids: frozenset[int] | None = None,
 ) -> str | None:
     """Show Discord UI for each question and return the formatted answer string.
 
@@ -41,6 +42,8 @@ async def collect_ask_answers(
     2. Registers a Queue with ask_bus and shows the AskView.
     3. Awaits the answer for up to 24 hours via asyncio.wait_for.
     4. Cleans up the DB entry once answered or timed out.
+
+    ``allowed_user_ids`` restricts who may answer (None = unrestricted).
 
     Returns a human-readable string to inject as the next human turn, or None
     if no question received an answer.
@@ -71,7 +74,13 @@ async def collect_ask_answers(
         # race between the user clicking and the queue being registered.
         answer_queue = _ask_bus.register(thread.id)
 
-        view = AskView(q, thread_id=thread.id, q_idx=q_idx, ask_repo=ask_repo)
+        view = AskView(
+            q,
+            thread_id=thread.id,
+            q_idx=q_idx,
+            ask_repo=ask_repo,
+            allowed_user_ids=allowed_user_ids,
+        )
         msg = await thread.send(embed=ask_embed(q.question, q.header), view=view)
 
         try:

@@ -42,6 +42,9 @@ _RESTART_MSG = (
 )
 
 
+_NOT_ALLOWED_MSG = "この質問に回答する権限がありません。"
+
+
 class AskView(discord.ui.View):
     """Renders buttons or a select menu for a single AskUserQuestion prompt.
 
@@ -68,9 +71,12 @@ class AskView(discord.ui.View):
         q_idx: int,
         bus: AskAnswerBus | None = None,
         ask_repo: PendingAskRepository | None = None,
+        allowed_user_ids: frozenset[int] | None = None,
     ) -> None:
         super().__init__(timeout=None)  # persistent — survives bot restarts
         self._thread_id = thread_id
+        # Users who may answer. None = unrestricted (access control unconfigured).
+        self._allowed_user_ids = allowed_user_ids
         self._bus = bus if bus is not None else _default_ask_bus
         self._ask_repo = ask_repo
 
@@ -114,6 +120,23 @@ class AskView(discord.ui.View):
         )
         other_btn.callback = self._other_callback
         self.add_item(other_btn)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Only allowed users may answer — applies to every button, select and Other.
+
+        Without this, any guild member who can see the thread could answer and
+        the answer would become the next prompt of someone else's session,
+        bypassing the allowlist enforced in ``ClaudeChatCog.on_message``.
+        """
+        if self._allowed_user_ids is None or interaction.user.id in self._allowed_user_ids:
+            return True
+        logger.warning(
+            "AskView: rejected answer from unauthorized user %s in thread %d",
+            interaction.user.id,
+            self._thread_id,
+        )
+        await interaction.response.send_message(_NOT_ALLOWED_MSG, ephemeral=True)
+        return False
 
     # ------------------------------------------------------------------
     # Internal helpers

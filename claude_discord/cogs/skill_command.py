@@ -24,6 +24,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from ..authz import build_allowed_user_ids
 from ..claude.runner import ClaudeRunner
 from ..concurrency import SessionRegistry
 from ..database.repository import SessionRepository
@@ -243,6 +244,9 @@ class SkillCommandCog(commands.Cog):
                     session_id=session_id,
                     registry=self._registry,
                     worktree_manager=getattr(self.bot, "worktree_manager", None),
+                    ask_answerer_ids=build_allowed_user_ids(
+                        self._allowed_user_ids, getattr(self.bot, "owner_id", None)
+                    ),
                 )
             )
             return
@@ -273,5 +277,8 @@ class SkillCommandCog(commands.Cog):
                 session_id=None,
                 registry=self._registry,
                 worktree_manager=getattr(self.bot, "worktree_manager", None),
+                ask_answerer_ids=build_allowed_user_ids(
+                    self._allowed_user_ids, getattr(self.bot, "owner_id", None)
+                ),
             )
         )

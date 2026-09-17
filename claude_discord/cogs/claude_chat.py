@@ -21,6 +21,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from ..authz import build_allowed_user_ids
 from ..claude.runner import ClaudeRunner
 from ..concurrency import SessionRegistry
 from ..coordination.service import CoordinationService
@@ -595,6 +596,9 @@ class ClaudeChatCog(commands.Cog):
                         discord_user_id=str(user_message.author.id),
                         discord_username=user_message.author.display_name,
                         bot_name=self._bot_name or getattr(self.bot.user, "name", None),
+                        ask_answerer_ids=build_allowed_user_ids(
+                            self._allowed_user_ids, getattr(self.bot, "owner_id", None)
+                        ),
                     )
                 )
             finally:

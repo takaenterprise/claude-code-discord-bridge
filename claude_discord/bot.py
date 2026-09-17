@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import discord
 from discord.ext import commands
 
+from .authz import GatedCommandTree, resolve_allowed_user_ids
 from .claude.types import AskOption, AskQuestion
 from .concurrency import SessionRegistry
 from .coordination.service import CoordinationService
@@ -35,6 +36,7 @@ class ClaudeDiscordBot(commands.Bot):
         lounge_repo: LoungeRepository | None = None,
         lounge_channel_id: int | None = None,
         worktree_manager: WorktreeManager | None = None,
+        allowed_user_ids: set[int] | None = None,
     ) -> None:
         intents = discord.Intents.default()
         intents.message_content = True
@@ -43,9 +45,15 @@ class ClaudeDiscordBot(commands.Bot):
         super().__init__(
             command_prefix="!",  # Not used, but required
             intents=intents,
+            # Slash commands are rejected for users outside allowed_user_ids ∪ {owner_id}
+            # before any callback runs (see authz.py).
+            tree_cls=GatedCommandTree,
         )
         self.channel_id = channel_id
         self.owner_id = owner_id
+        # Users allowed to operate the bot (slash commands, AskUserQuestion answers).
+        # None together with owner_id=None means access control is unconfigured.
+        self.allowed_user_ids: set[int] | None = allowed_user_ids
         self.session_registry = SessionRegistry()
         # Optional repo for AskUserQuestion restart recovery
         self.ask_repo: PendingAskRepository | None = ask_repo
@@ -188,6 +196,7 @@ class ClaudeDiscordBot(commands.Bot):
                     q_idx=q_idx,
                     bus=ask_bus,
                     ask_repo=self.ask_repo,
+                    allowed_user_ids=resolve_allowed_user_ids(self),
                 )
                 self.add_view(view)
                 logger.debug(

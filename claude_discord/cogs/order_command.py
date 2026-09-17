@@ -24,6 +24,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from ..authz import SELF_AUTHORIZED_EXTRA
+
 if TYPE_CHECKING:
     pass
 
@@ -552,6 +554,8 @@ class OrderCommandCog(commands.Cog):
 
     @app_commands.command(
         name="order",
+        # Enforces its own allowlist (*_ALLOWED_USER_IDS); exempt from the tree gate.
+        extras={SELF_AUTHORIZED_EXTRA: True},
         description=(
             "\u624b\u52d5\u767a\u6ce8\uff08JAN:cs \u2192 \u30d7\u30ec\u30d3\u30e5\u30fc \u2192 "
             "\u78ba\u8a8d \u2192 SS-07/SS-13\u66f8\u304d\u8fbc\u307f\uff09"
