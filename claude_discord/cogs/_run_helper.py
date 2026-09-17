@@ -460,6 +460,7 @@ async def run_claude_with_config(config: RunConfig) -> str | None:
             processor.pending_ask,
             processor.session_id,
             ask_repo=config.ask_repo,
+            allowed_user_ids=config.ask_answerer_ids,
         )
         if answer_prompt:
             logger.info(

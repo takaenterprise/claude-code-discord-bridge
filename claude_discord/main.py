@@ -204,17 +204,7 @@ async def main() -> None:
     coordination_channel_id = (
         int(config["coordination_channel_id"]) if config["coordination_channel_id"] else None
     )
-    bot = ClaudeDiscordBot(
-        channel_id=int(config["channel_id"]),
-        owner_id=owner_id,
-        coordination_channel_id=coordination_channel_id,
-        ask_repo=ask_repo,
-        lounge_repo=lounge_repo,
-        lounge_channel_id=coordination_channel_id,  # lounge uses the same channel
-        worktree_manager=create_worktree_manager(config),
-    )
-
-    # Build allowed_user_ids early (used by both ClaudeChatCog and SkillCommandCog)
+    # Build allowed_user_ids early (bot command gate, ClaudeChatCog, SkillCommandCog)
     allowed_user_ids_str = config.get("allowed_user_ids", "")
     if allowed_user_ids_str:
         allowed_user_ids = {
@@ -224,6 +214,17 @@ async def main() -> None:
         allowed_user_ids = {int(config["owner_id"])}
     else:
         allowed_user_ids = None
+
+    bot = ClaudeDiscordBot(
+        channel_id=int(config["channel_id"]),
+        owner_id=owner_id,
+        coordination_channel_id=coordination_channel_id,
+        ask_repo=ask_repo,
+        lounge_repo=lounge_repo,
+        lounge_channel_id=coordination_channel_id,  # lounge uses the same channel
+        worktree_manager=create_worktree_manager(config),
+        allowed_user_ids=allowed_user_ids,
+    )
 
     # Build allowed_skills (Bot別スキル権限フィルタ)
     allowed_skills_str = config.get("allowed_skills", "")

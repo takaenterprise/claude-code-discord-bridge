@@ -23,6 +23,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from ..authz import SELF_AUTHORIZED_EXTRA
+
 if TYPE_CHECKING:
     pass
 
@@ -218,6 +220,8 @@ class ListingCommandCog(commands.Cog):
 
     @app_commands.command(
         name="shuppin",
+        # Enforces its own allowlist (*_ALLOWED_USER_IDS); exempt from the tree gate.
+        extras={SELF_AUTHORIZED_EXTRA: True},
         description="SS-17ベースでモール出品（JAN未指定=未出品全部、指定=バリエーション展開）",
     )
     @app_commands.describe(

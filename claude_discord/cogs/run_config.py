@@ -71,6 +71,9 @@ class RunConfig:
     discord_user_id: str | None = None
     discord_username: str | None = None
     bot_name: str | None = None
+    # Users allowed to answer AskUserQuestion prompts in this run.
+    # None = unrestricted (access control unconfigured).
+    ask_answerer_ids: frozenset[int] | None = None
 
     # Prevent accidental field mutation — RunConfig is a value object.
     # Use dataclasses.replace() to create modified copies.
