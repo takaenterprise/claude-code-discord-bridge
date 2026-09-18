@@ -57,7 +57,11 @@ _STUB = textwrap.dedent(
     log = os.environ["STUB_LOG"]
     args = sys.argv[1:]
     if args[0] == "preview":
-        jans = [a for a in args[1:] if ":" in a and not a.startswith("-")]
+        # JAN:cs items come before the first option ("C:\\..." paths on
+        # Windows also contain ":", so do not scan past the options).
+        head = args[1:]
+        head = head[: next((i for i, a in enumerate(head) if a.startswith("-")), len(head))]
+        jans = [a for a in head if ":" in a]
         out = None
         if "--output" in args:
             out = args[args.index("--output") + 1]
