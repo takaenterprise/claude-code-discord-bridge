@@ -45,6 +45,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Resume prompt for a session that was waiting on an AskUserQuestion answer when
+# the bot restarted. The answer never arrived, so the session must not proceed
+# (security audit run-3, 2026-09-18).
+_REASK_RESUME_PROMPT = (
+    "ボットが再起動しました。未回答の質問（AskUserQuestion）があります。"
+    "回答が来るまで先へ進まず、その質問をもう一度してください。"
+    "質問の答えを前提にした操作（書込・送信・削除など）は実行しないでください。"
+)
+
 
 class ClaudeChatCog(commands.Cog):
     """Cog that handles Claude Code conversations via Discord threads."""
@@ -339,6 +348,25 @@ class ClaudeChatCog(commands.Cog):
         )
         return thread
 
+    async def _has_pending_ask(self, thread_id: int) -> bool:
+        """Return True when *thread_id* has an unanswered AskUserQuestion row.
+
+        Errors are treated as "pending" (fail-safe): a session that might be
+        waiting for a human decision must not be resumed with a generic
+        "finish the remaining work" prompt.
+        """
+        if self._ask_repo is None:
+            return False
+        try:
+            return await self._ask_repo.get(thread_id) is not None
+        except Exception:
+            logger.warning(
+                "Could not read pending ask for thread %d — treating as pending",
+                thread_id,
+                exc_info=True,
+            )
+            return True
+
     async def cog_unload(self) -> None:
         """Mark all mid-run Claude sessions for auto-resume on the next bot startup.
 
@@ -352,6 +380,12 @@ class ClaudeChatCog(commands.Cog):
         next human message) are NOT in ``_active_runners`` and therefore are not
         marked — they resume naturally via message-triggered resume when the user
         sends their next message.
+
+        A session that is waiting for an AskUserQuestion answer (a row in
+        ``pending_asks``) is marked with :data:`_REASK_RESUME_PROMPT` instead of
+        the generic "finish the remaining work" prompt, so the restart never
+        lets it proceed past a human decision without an answer (security audit
+        run-3, 2026-09-18).
 
         No-op when ``_resume_repo`` is not configured.
         """
@@ -369,13 +403,18 @@ class ClaudeChatCog(commands.Cog):
                 if record is not None:
                     session_id = record.session_id
 
+                awaiting_answer = await self._has_pending_ask(thread_id)
                 await self._resume_repo.mark(
                     thread_id,
                     session_id=session_id,
-                    reason="bot_shutdown",
+                    reason="bot_shutdown_pending_ask" if awaiting_answer else "bot_shutdown",
                     resume_prompt=(
-                        "ボットが再起動しました。"
-                        "前の作業の続きを確認し、必要な残作業があれば完了してください。"
+                        _REASK_RESUME_PROMPT
+                        if awaiting_answer
+                        else (
+                            "ボットが再起動しました。"
+                            "前の作業の続きを確認し、必要な残作業があれば完了してください。"
+                        )
                     ),
                 )
                 logger.info(
@@ -442,6 +481,11 @@ class ClaudeChatCog(commands.Cog):
                 "ボットが再起動から復帰しました。"
                 "前の作業の続きを確認し、必要な残作業を完了してください。"
             )
+            # Never resume a session that is waiting for a human answer with a
+            # generic / caller-supplied prompt — whatever marked it (older
+            # build, /api/mark-resume), it must re-ask instead of proceeding.
+            if await self._has_pending_ask(thread_id):
+                resume_prompt = _REASK_RESUME_PROMPT
 
             logger.info(
                 "Resuming session in thread %d (session_id=%s, reason=%s)",

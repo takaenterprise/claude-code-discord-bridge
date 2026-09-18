@@ -112,6 +112,25 @@ class PendingAskRepository:
             )
             await db.commit()
 
+    async def delete_if_nonce(self, thread_id: int, nonce: str | None) -> bool:
+        """Remove the pending ask for *thread_id* only if its nonce is *nonce*.
+
+        Used by stale / restored views: a click on an old question's buttons
+        must not delete the row of a newer question in the same thread
+        (security audit run-3, 2026-09-18). ``nonce=None`` matches only rows
+        written before nonces existed (SQL ``IS`` compares NULL as equal).
+        Returns True when a row was deleted.
+        """
+        async with aiosqlite.connect(self._db_path) as db:
+            cursor = await db.execute(
+                "DELETE FROM pending_asks WHERE thread_id = ? AND nonce IS ?",
+                (thread_id, nonce),
+            )
+            await db.commit()
+            deleted = cursor.rowcount > 0
+        logger.debug("PendingAskRepository: delete_if_nonce thread %d -> %s", thread_id, deleted)
+        return deleted
+
     async def delete(self, thread_id: int) -> None:
         """Remove the pending ask for *thread_id* (called after answer received)."""
         async with aiosqlite.connect(self._db_path) as db:
