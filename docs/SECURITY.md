@@ -90,7 +90,7 @@ These variables are removed from the subprocess environment before spawning Clau
 
 1. **DISCORD_BOT_TOKEN / DISCORD_TOKEN**: Prevents Claude Code from reading the Discord token via its Bash tool
 2. **CLAUDECODE**: Claude Code uses this to detect nesting. Stripping it ensures the subprocess runs as a fresh top-level instance
-3. **API_SECRET_KEY**: If the host bot exposes a REST API, this key shouldn't leak to Claude
+3. **API_SECRET_KEY**: The raw variable is stripped, but this is **not** secret separation from Claude. When the REST API is enabled, the same key is injected into every Claude session as `CCDB_API_SECRET` (with `CCDB_API_URL`) so sessions can call the API with `Authorization: Bearer $CCDB_API_SECRET` (`ClaudeRunner._build_env`). A session that has a shell running as the bot's uid can also read anything the bot process can read. Treat the key as authenticating "the bot and its sessions" against other local users — not as a boundary between the bot and Claude. If the API server fails to start (for example, the port is already taken), neither `CCDB_API_URL` nor `CCDB_API_SECRET` is injected, so sessions never send the key to a port the bot does not own.
 
 ### What's NOT Stripped
 

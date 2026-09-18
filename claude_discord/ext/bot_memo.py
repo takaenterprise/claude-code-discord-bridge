@@ -56,6 +56,38 @@ def _truncate(text: str, max_chars: int) -> str:
     return text[:max_chars] + f"…（{max_chars}字超のため省略）"
 
 
+# Lines in user/model text that could pass for memo structure: headings (``#``),
+# the record separator / frontmatter fence (``---``) and other thematic breaks or
+# setext underlines, and the ``**Q:**`` / ``**A:**`` field labels. Leading
+# indentation is kept so the match covers what Markdown itself would treat as
+# structure.
+_FORGEABLE_LINE_RE = re.compile(
+    r"^([ \t]*)(\*\*[QA]:\*\*|#|-{3,}|\*{3,}|_{3,}|={3,})",
+    re.MULTILINE,
+)
+
+
+def _neutralize_structure(text: str) -> str:
+    """Backslash-escape line-leading memo structure inside *text*.
+
+    Without this, a prompt or reply containing a line such as
+    ``### 12:01 — bot1 ...`` followed by ``**Q:**`` / ``**A:**`` / ``---``
+    would read as a separate, forged turn in the memo (security audit run-3, 2026-09-18). A leading
+    backslash is a standard Markdown escape: rendered text still reads the
+    same, but no line of the snippet starts with ``#`` / ``---`` / ``**Q:**``.
+    """
+
+    def _escape(m: re.Match[str]) -> str:
+        indent, token = m.group(1), m.group(2)
+        if token.startswith("**"):
+            return indent + "\\*\\*" + token[2:]
+        return indent + "\\" + token
+
+    # A bare CR is a Markdown line ending too — normalise before matching.
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return _FORGEABLE_LINE_RE.sub(_escape, text)
+
+
 def _sanitize_for_fs(name: str, max_chars: int) -> str:
     """Make a string safe to use in a filename or markdown heading.
 
@@ -77,6 +109,7 @@ def build_memo_entry(
     result_text: str,
     session_id: str | None,
     now: datetime,
+    discord_user_id: str | None = None,
 ) -> str:
     """Build a markdown fragment for one conversation turn.
 
@@ -86,6 +119,12 @@ def build_memo_entry(
     chars and `result_text` to 1500 chars, each with a visible "truncated"
     marker when cut (see _truncate()).
 
+    The heading records the speaker (``discord_user_id``; ``(unknown)`` when the
+    turn has no Discord author, e.g. a scheduled or restart-resume run), and
+    line-leading ``#`` / ``---`` / ``**Q:**`` / ``**A:**`` in the prompt and
+    result are escaped so they cannot fake another turn (see
+    _neutralize_structure()).
+
     `thread_name` is accepted for interface symmetry with append_memo() but
     is not otherwise used here — the per-turn heading identifies the turn by
     time/bot/thread id/session, while the thread name itself is written once
@@ -93,12 +132,14 @@ def build_memo_entry(
     """
     del thread_name  # unused here — see docstring
     time_label = now.strftime("%H:%M")
-    prompt_snippet = _truncate(prompt.strip(), _PROMPT_MAX_CHARS)
-    result_snippet = _truncate(result_text.strip(), _RESULT_MAX_CHARS)
+    prompt_snippet = _neutralize_structure(_truncate(prompt.strip(), _PROMPT_MAX_CHARS))
+    result_snippet = _neutralize_structure(_truncate(result_text.strip(), _RESULT_MAX_CHARS))
     session_label = session_id or "(none)"
+    user_label = re.sub(r"\s+", "", discord_user_id or "") or "(unknown)"
 
     lines = [
-        f"### {time_label} — {bot_name} (thread {thread_id}, session {session_label})",
+        f"### {time_label} — {bot_name} "
+        f"(thread {thread_id}, session {session_label}, user {user_label})",
         "",
         f"**Q:** {prompt_snippet}",
         "",

@@ -186,10 +186,27 @@ class AskView(discord.ui.View):
             )
         else:
             # Bot was restarted — clean up stale DB entry and inform user.
-            if self._ask_repo is not None:
-                await self._ask_repo.delete(self._thread_id)
+            await self._drop_own_pending_row()
             await interaction.response.send_message(_RESTART_MSG, ephemeral=True)
         self.stop()
+
+    async def _drop_own_pending_row(self) -> None:
+        """Delete this view's pending_asks row — and only this view's.
+
+        The row is removed only when its nonce equals this view's nonce, so a
+        click on an old (restored) question never deletes the pending row of a
+        newer question asked in the same thread since the restart.
+        """
+        if self._ask_repo is None:
+            return
+        try:
+            await self._ask_repo.delete_if_nonce(self._thread_id, self._nonce)
+        except Exception:
+            logger.warning(
+                "AskView: failed to clean up pending ask for thread %d",
+                self._thread_id,
+                exc_info=True,
+            )
 
     async def _select_callback(self, interaction: discord.Interaction) -> None:
         values: list[str] = interaction.data.get("values", [])  # type: ignore[union-attr]
@@ -198,8 +215,7 @@ class AskView(discord.ui.View):
     async def _other_callback(self, interaction: discord.Interaction) -> None:
         if self._restored:
             # Session died with the previous process — do not open the modal.
-            if self._ask_repo is not None:
-                await self._ask_repo.delete(self._thread_id)
+            await self._drop_own_pending_row()
             await interaction.response.send_message(_RESTART_MSG, ephemeral=True)
             self.stop()
             return
@@ -213,8 +229,7 @@ class AskView(discord.ui.View):
                 else self._bus.post_answer(self._thread_id, [modal.answer], nonce=self._nonce)
             )
             if not delivered:
-                if self._ask_repo is not None:
-                    await self._ask_repo.delete(self._thread_id)
+                await self._drop_own_pending_row()
                 logger.warning(
                     "AskView._other_callback: session gone for thread %d after restart",
                     self._thread_id,

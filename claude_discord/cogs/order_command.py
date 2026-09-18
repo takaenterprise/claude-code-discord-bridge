@@ -14,9 +14,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import os
+import shutil
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -664,7 +667,32 @@ class OrderCommandCog(commands.Cog):
         reason: app_commands.Choice[str] | None,
         user_id: int,
     ) -> None:
-        """発注フローのメイン処理（JAN追加→再プレビューのループ対応）"""
+        """発注フローのメイン処理（JAN追加→再プレビューのループ対応）
+
+        The preview JSON goes to a private per-interaction directory
+        (``tempfile.mkdtemp`` = 0700, unique name) via ``preview --output``, and
+        the SHA-256 of the exact bytes shown to the user is re-checked right
+        before execute. manual_order.py's default path only has 1-second
+        resolution, so two previews in the same second used to share one file
+        and the first confirm executed the second user's order (security audit
+        run-3, 2026-09-18). The directory is removed after execute / cancel /
+        timeout / error.
+        """
+        work_dir = tempfile.mkdtemp(prefix="ccdb_order_")
+        try:
+            await self._process_order_in(interaction, jan_items, reason, user_id, work_dir)
+        finally:
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+    async def _process_order_in(
+        self,
+        interaction: discord.Interaction,
+        jan_items: list[str],
+        reason: app_commands.Choice[str] | None,
+        user_id: int,
+        work_dir: str,
+    ) -> None:
+        """Body of :meth:`_process_order` (``work_dir`` already created)."""
         # reason がChoiceオブジェクトか生の文字列かを安全に処理
         if reason is None:
             reason_value = "restock"
@@ -688,6 +716,7 @@ class OrderCommandCog(commands.Cog):
 
         # Preview → ボタン → (JAN追加 → 再Preview) のループ
         preview_path = None
+        preview_digest = ""
         view = None
         iteration = 0
 
@@ -697,7 +726,9 @@ class OrderCommandCog(commands.Cog):
             # 重複JAN統合
             jan_items = _dedup_jan_items(jan_items)
 
-            # Run preview
+            # Run preview — into this interaction's own file (never a shared
+            # timestamp-named path in /tmp).
+            expected_path = str(Path(work_dir) / f"preview_{iteration}.json")
             cmd = [
                 "python3",
                 ORDER_SCRIPT,
@@ -705,6 +736,8 @@ class OrderCommandCog(commands.Cog):
                 *jan_items,
                 "--reason",
                 reason_value,
+                "--output",
+                expected_path,
             ]
 
             try:
@@ -734,9 +767,10 @@ class OrderCommandCog(commands.Cog):
                 await interaction.edit_original_response(embed=embed, view=None)
                 return
 
-            # プレビューJSON読み取り
-            preview_path = stdout.decode("utf-8", errors="replace").strip()
-            if not preview_path or not Path(preview_path).exists():
+            # プレビューJSON読み取り — 自分が指定した出力先だけを信用する
+            # （stdout の別パスは採用しない）
+            preview_path = expected_path
+            if not Path(preview_path).exists():
                 err = stderr.decode("utf-8", errors="replace").strip()
                 embed = discord.Embed(
                     title="\u30d7\u30ec\u30d3\u30e5\u30fc\u30a8\u30e9\u30fc",
@@ -752,8 +786,11 @@ class OrderCommandCog(commands.Cog):
                 return
 
             try:
-                preview_data = json.loads(Path(preview_path).read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError) as e:
+                raw = Path(preview_path).read_bytes()
+                # Digest of the exact bytes parsed and shown to the user.
+                preview_digest = hashlib.sha256(raw).hexdigest()
+                preview_data = json.loads(raw.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
                 embed = discord.Embed(
                     title="\u30d1\u30fc\u30b9\u30a8\u30e9\u30fc",
                     description=(
@@ -835,6 +872,33 @@ class OrderCommandCog(commands.Cog):
         # while 条件（iteration=0 < MAX_ADD_ITERATIONS>=1）により最低1周は必ず実行され、
         # break 到達前は必ず view が代入済み（未代入なら手前のreturnで抜けている）
         assert view is not None
+
+        # Step 6.5: 確認した内容と実行する内容の一致を確認（SHA-256）
+        assert preview_path is not None
+        try:
+            current_digest = hashlib.sha256(Path(preview_path).read_bytes()).hexdigest()
+        except OSError:
+            current_digest = ""
+        if current_digest != preview_digest:
+            logger.warning(
+                "/order by %s: preview file changed after confirmation — aborted (%s)",
+                interaction.user.name,
+                preview_path,
+            )
+            embed = discord.Embed(
+                title="\u30d7\u30ec\u30d3\u30e5\u30fc\u304c\u5909\u308f\u3063\u305f"
+                "\u305f\u3081\u4e2d\u6b62\u3057\u307e\u3057\u305f",
+                description=(
+                    "\u78ba\u8a8d\u3057\u305f\u5185\u5bb9\u3068\u5b9f\u884c"
+                    "\u3059\u308b\u5185\u5bb9\u304c\u4e00\u81f4\u3057\u306a\u3044"
+                    "\u305f\u3081\u3001\u767a\u6ce8\u3057\u3066\u3044\u307e\u305b\u3093\u3002"
+                    "\u3082\u3046\u4e00\u5ea6 /order \u304b\u3089"
+                    "\u3084\u308a\u76f4\u3057\u3066\u304f\u3060\u3055\u3044\u3002"
+                ),
+                color=COLOR_ERROR,
+            )
+            await interaction.edit_original_response(embed=embed, view=None)
+            return
 
         # Step 7: 発注実行
         dry_run = view.result == "dry_run"

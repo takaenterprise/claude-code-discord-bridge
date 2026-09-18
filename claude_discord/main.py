@@ -26,6 +26,7 @@ from .database.usage_repo import UsageRepository
 from .utils.logger import setup_logging
 
 if TYPE_CHECKING:
+    from .ext.api_server import ApiServer
     from .worktree import WorktreeManager
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,30 @@ def load_config() -> dict[str, str]:
         "claude_allowed_tools": os.getenv("CLAUDE_ALLOWED_TOOLS", ""),
         "worktree_base_dir": os.getenv("WORKTREE_BASE_DIR", ""),
     }
+
+
+async def _start_api_server(api_server: ApiServer, runner: ClaudeRunner) -> bool:
+    """Start the REST API; on failure stop handing its URL and key to sessions.
+
+    If the port is already taken (another process bound it first), sessions
+    must not keep receiving ``CCDB_API_URL`` / ``CCDB_API_SECRET`` — they would
+    send the bearer key to whoever owns that port (security audit run-3,
+    2026-09-18). Clearing ``runner.api_port`` / ``runner.api_secret`` makes
+    ``ClaudeRunner._build_env`` (and every later ``clone()``) omit both.
+
+    Returns True when the server started.
+    """
+    try:
+        await api_server.start()
+    except Exception:
+        logger.error(
+            "API server start failed — sessions will not receive CCDB_API_URL/CCDB_API_SECRET",
+            exc_info=True,
+        )
+        runner.api_port = None
+        runner.api_secret = None
+        return False
+    return True
 
 
 def create_runner(config: dict[str, str]) -> BaseRunner:
@@ -415,10 +440,7 @@ async def main() -> None:
 
         # Start API server if configured
         if api_server is not None:
-            try:
-                await api_server.start()
-            except Exception:
-                logger.warning("API server start failed", exc_info=True)
+            await _start_api_server(api_server, runner)
 
         # Handle signals (add_signal_handler is not supported on Windows)
         if sys.platform != "win32":

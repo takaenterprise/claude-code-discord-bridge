@@ -611,7 +611,11 @@ class TestCogUnloadMarkForResume:
         repo.get = AsyncMock(return_value=None)
         resume_repo = MagicMock()
         resume_repo.mark = AsyncMock(return_value=1)
-        cog = ClaudeChatCog(bot=bot, repo=repo, runner=MagicMock(), resume_repo=resume_repo)
+        ask_repo = MagicMock()
+        ask_repo.get = AsyncMock(return_value=None)  # no unanswered question
+        cog = ClaudeChatCog(
+            bot=bot, repo=repo, runner=MagicMock(), resume_repo=resume_repo, ask_repo=ask_repo
+        )
         return cog, repo, resume_repo
 
     @pytest.mark.asyncio

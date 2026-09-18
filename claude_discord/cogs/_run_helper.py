@@ -217,6 +217,7 @@ def _write_bot_memo(config: RunConfig, processor: EventProcessor) -> None:
             result_text=result_text,
             session_id=processor.session_id,
             now=now,
+            discord_user_id=config.discord_user_id,
         )
 
         if contract_enabled():
