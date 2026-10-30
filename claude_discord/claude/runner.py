@@ -26,6 +26,35 @@ from .types import MessageType, StreamEvent
 
 logger = logging.getLogger(__name__)
 
+# 2026-10-30 社長「APIは使うなよ」:
+#   払い先を API・Bedrock・Vertex・ゲートウェイ等へ差し替える名前は、
+#   claude に渡さない。名前を並べず、規則で外す
+#   （claude には、並べきれない数の払い先の切り替え・鍵・接続先の名前がある）。
+# ec-automation-system の scripts/lib/claude_cli.py の
+#   is_paid_api_env_key と同じ規則（変える時は両方）。
+# 外す: ANTHROPIC_・CLAUDE_CODE_USE_・CLAUDE_CODE_GATEWAY_・
+#   CLAUDE_CODE_API_KEY で始まる名前と、AWS_BEARER_TOKEN_BEDROCK。
+# 残す: 契約のログイン（CLAUDE_CODE_OAUTH_TOKEN 等）。
+PAID_API_ENV_PREFIXES = (
+    "ANTHROPIC_",
+    "CLAUDE_CODE_USE_",
+    "CLAUDE_CODE_GATEWAY_",
+    "CLAUDE_CODE_API_KEY",
+)
+PAID_API_ENV_NAMES = ("AWS_BEARER_TOKEN_BEDROCK",)
+
+
+def is_paid_api_env_key(name: str) -> bool:
+    """claude に渡すと払い先が契約から外れうる名前か（上の規則）。大文字小文字は見ない。"""
+    n = str(name or "").upper()
+    return n in PAID_API_ENV_NAMES or n.startswith(PAID_API_ENV_PREFIXES)
+
+
+def subscription_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    """os.environ（または base）から、払い先を差し替える名前を除いた写し（元は変えない）。"""
+    src = os.environ if base is None else base
+    return {k: v for k, v in src.items() if not is_paid_api_env_key(k)}
+
 
 def _resolve_windows_cmd(cmd_path: Path) -> list[str] | None:
     """Resolve a Windows npm .cmd/.bat wrapper to ``[node, cli_js]``.
@@ -378,7 +407,8 @@ class ClaudeRunner(BaseRunner):
         Injects CCDB_API_URL (and optionally CCDB_API_SECRET) so Claude Code
         can register scheduled tasks via ``curl $CCDB_API_URL/api/tasks``.
         """
-        env = {k: v for k, v in os.environ.items() if k not in self._STRIPPED_ENV_KEYS}
+        # 払い先を差し替える名前も外す＝定額の契約だけで動く（2026-10-30 社長「APIは使うなよ」）
+        env = {k: v for k, v in subscription_env().items() if k not in self._STRIPPED_ENV_KEYS}
         if self.api_port is not None:
             env["CCDB_API_URL"] = f"http://127.0.0.1:{self.api_port}"
         if self.api_secret is not None:

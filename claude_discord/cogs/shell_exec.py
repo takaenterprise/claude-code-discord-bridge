@@ -20,6 +20,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from ..claude.runner import subscription_env
 from ..discord_ui.embeds import COLOR_ERROR, COLOR_INFO, COLOR_SUCCESS
 
 if TYPE_CHECKING:
@@ -76,6 +77,8 @@ class ShellExecCog(commands.Cog):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd="/home/ubuntu",
+                # /exec で claude -p を打っても API の鍵が効かない（2026-10-30 社長）
+                env=subscription_env(),
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(),

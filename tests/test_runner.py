@@ -146,6 +146,31 @@ class TestBuildEnv:
         finally:
             del os.environ["DISCORD_TOKEN"]
 
+    def test_strips_paid_api_keys(self, monkeypatch) -> None:
+        """払い先を差し替える名前は claude に渡さない（2026-10-30 社長「APIは使うなよ」）。
+        規則で外す＝一覧に無い名前（接頭の後ろに X を付けた物）も消える。契約のログインは残す。"""
+        from claude_discord.claude.runner import PAID_API_ENV_NAMES, PAID_API_ENV_PREFIXES
+
+        names = [p + "X" for p in PAID_API_ENV_PREFIXES] + list(PAID_API_ENV_NAMES)
+        for k in names:
+            monkeypatch.setenv(k, "x")
+        monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "keep")
+        env = ClaudeRunner()._build_env()
+        assert not any(k in env for k in names)
+        assert env.get("CLAUDE_CODE_OAUTH_TOKEN") == "keep"
+
+    def test_exec_cog_passes_the_subscription_env(self) -> None:
+        """/exec（オーナーのシェル）も同じ写しを渡す。
+        /exec で claude -p を打っても、API の鍵が効かない。"""
+        import inspect
+
+        from claude_discord.claude import runner as runner_mod
+        from claude_discord.cogs import shell_exec
+
+        assert shell_exec.subscription_env is runner_mod.subscription_env
+        src = inspect.getsource(shell_exec.ShellExecCog.exec_command.callback)
+        assert "env=subscription_env()" in src
+
     def test_preserves_path(self) -> None:
         runner = ClaudeRunner()
         env = runner._build_env()
