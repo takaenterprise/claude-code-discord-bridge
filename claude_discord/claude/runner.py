@@ -26,12 +26,21 @@ from .types import MessageType, StreamEvent
 
 logger = logging.getLogger(__name__)
 
-# 2026-10-30 社長「APIは使うなよ」: 払い先を API・Bedrock・Vertex・ゲートウェイ等へ差し替える名前は claude に渡さない。
-# 名前を並べず規則で外す（claude には並べきれない数の払い先の切り替え・鍵・接続先・ヘッダの名前がある）。
-# ec-automation-system の scripts/lib/claude_cli.py の is_paid_api_env_key と同じ規則（変える時は両方）。
-#   ANTHROPIC_ で始まる名前・CLAUDE_CODE_USE_ で始まる名前・CLAUDE_CODE_GATEWAY_ で始まる名前・
-#   CLAUDE_CODE_API_KEY で始まる名前・AWS_BEARER_TOKEN_BEDROCK。契約のログイン（CLAUDE_CODE_OAUTH_TOKEN 等）は残る
-PAID_API_ENV_PREFIXES = ("ANTHROPIC_", "CLAUDE_CODE_USE_", "CLAUDE_CODE_GATEWAY_", "CLAUDE_CODE_API_KEY")
+# 2026-10-30 社長「APIは使うなよ」:
+#   払い先を API・Bedrock・Vertex・ゲートウェイ等へ差し替える名前は、
+#   claude に渡さない。名前を並べず、規則で外す
+#   （claude には、並べきれない数の払い先の切り替え・鍵・接続先の名前がある）。
+# ec-automation-system の scripts/lib/claude_cli.py の
+#   is_paid_api_env_key と同じ規則（変える時は両方）。
+# 外す: ANTHROPIC_・CLAUDE_CODE_USE_・CLAUDE_CODE_GATEWAY_・
+#   CLAUDE_CODE_API_KEY で始まる名前と、AWS_BEARER_TOKEN_BEDROCK。
+# 残す: 契約のログイン（CLAUDE_CODE_OAUTH_TOKEN 等）。
+PAID_API_ENV_PREFIXES = (
+    "ANTHROPIC_",
+    "CLAUDE_CODE_USE_",
+    "CLAUDE_CODE_GATEWAY_",
+    "CLAUDE_CODE_API_KEY",
+)
 PAID_API_ENV_NAMES = ("AWS_BEARER_TOKEN_BEDROCK",)
 
 

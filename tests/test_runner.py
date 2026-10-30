@@ -160,14 +160,16 @@ class TestBuildEnv:
         assert env.get("CLAUDE_CODE_OAUTH_TOKEN") == "keep"
 
     def test_exec_cog_passes_the_subscription_env(self) -> None:
-        """/exec（オーナーのシェル）も同じ写しを渡す＝/exec で claude -p を打っても API の鍵が効かない。"""
+        """/exec（オーナーのシェル）も同じ写しを渡す。
+        /exec で claude -p を打っても、API の鍵が効かない。"""
         import inspect
 
         from claude_discord.claude import runner as runner_mod
         from claude_discord.cogs import shell_exec
 
         assert shell_exec.subscription_env is runner_mod.subscription_env
-        assert "env=subscription_env()" in inspect.getsource(shell_exec.ShellExecCog.exec_command.callback)
+        src = inspect.getsource(shell_exec.ShellExecCog.exec_command.callback)
+        assert "env=subscription_env()" in src
 
     def test_preserves_path(self) -> None:
         runner = ClaudeRunner()

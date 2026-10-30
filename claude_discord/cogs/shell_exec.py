@@ -77,7 +77,8 @@ class ShellExecCog(commands.Cog):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd="/home/ubuntu",
-                env=subscription_env(),  # /exec で claude -p を打っても API の鍵が効かない（2026-10-30 社長「APIは使うなよ」）
+                # /exec で claude -p を打っても API の鍵が効かない（2026-10-30 社長）
+                env=subscription_env(),
             )
             stdout, stderr = await asyncio.wait_for(
                 proc.communicate(),
