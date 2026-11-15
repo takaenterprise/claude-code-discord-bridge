@@ -32,8 +32,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # 乗っ取り対策 第1段（2026-11-15・⑧システム・セキュリティ部・社長「全てだ。」）:
-# 社長の Discord のアカウント1つで VM を管理者として動かせる命令（/exec・/order・/goq-upload・/haiban）は
-# 読み込まない（直近4週の使用は0件・10-26 の総点検）。出品の命令（/shuppin）も環境変数に関わらず読み込まない。
+# 社長の Discord のアカウント1つで VM を管理者として動かせる命令
+# （/exec・/order・/goq-upload・/haiban）は読み込まない（直近4週の使用は0件・10-26 の総点検）。
+# 出品の命令（/shuppin）も環境変数に関わらず読み込まない。
 # 戻し方: 下の値を True にして bot を再起動する（.env では戻せない＝鍵の置き場と別にしてある）。
 ADMIN_COMMANDS_ENABLED = False
 LISTING_COMMAND_ALLOWED = False
@@ -373,7 +374,7 @@ async def main() -> None:
         listing_cog = ListingCommandCog(bot)
         logger.info("ListingCommandCog enabled (SHUPPIN_ENABLED=1)")
     else:
-        logger.info("ListingCommandCog disabled (LISTING_COMMAND_ALLOWED=False・乗っ取り対策 第1段)")
+        logger.info("ListingCommandCog disabled (LISTING_COMMAND_ALLOWED=False)")
 
     # OrderCommandCog — /order (手動発注: JAN:cs → SS-07/SS-13書き込み)
     from .cogs.order_command import OrderCommandCog
@@ -400,7 +401,10 @@ async def main() -> None:
 
     haiban_cog = HaibanCommandCog(bot) if ADMIN_COMMANDS_ENABLED else None
     if not ADMIN_COMMANDS_ENABLED:
-        logger.info("管理者向けの命令 /exec・/order・/goq-upload・/haiban は読み込まない（ADMIN_COMMANDS_ENABLED=False・乗っ取り対策 第1段）")
+        logger.info(
+            "Admin commands /exec /order /goq-upload /haiban disabled "
+            "(ADMIN_COMMANDS_ENABLED=False)"
+        )
 
     # ProfitCommandCog — /profit (モール固有SKU/JANから利益率算出)
     from .cogs.profit_command import ProfitCommandCog
