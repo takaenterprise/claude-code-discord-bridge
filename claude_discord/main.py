@@ -31,6 +31,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# 乗っ取り対策 第1段（2026-11-15・⑧システム・セキュリティ部・社長「全てだ。」）:
+# 社長の Discord のアカウント1つで VM を管理者として動かせる命令
+# （/exec・/order・/goq-upload・/haiban）は読み込まない（直近4週の使用は0件・10-26 の総点検）。
+# 出品の命令（/shuppin）も環境変数に関わらず読み込まない。
+# 戻し方: 下の値を True にして bot を再起動する（.env では戻せない＝鍵の置き場と別にしてある）。
+ADMIN_COMMANDS_ENABLED = False
+LISTING_COMMAND_ALLOWED = False
+
 
 def load_config() -> dict[str, str]:
     """Load and validate configuration from environment."""
@@ -340,7 +348,7 @@ async def main() -> None:
     # ShellExecCog — /exec (owner-only shell command execution)
     from .cogs.shell_exec import ShellExecCog
 
-    shell_exec_cog = ShellExecCog(bot)
+    shell_exec_cog = ShellExecCog(bot) if ADMIN_COMMANDS_ENABLED else None
 
     # ShohinSearchCog — /shohin (商品マスター検索)
     from .cogs.shohin_search import ShohinSearchCog
@@ -360,18 +368,18 @@ async def main() -> None:
     # ListingCommandCog — /shuppin (スマホ出品: JAN+原価→全モール出品)
     # SHUPPIN_ENABLED=1 の場合のみ読み込む（デフォルト無効）
     listing_cog = None
-    if os.getenv("SHUPPIN_ENABLED", "").strip() in ("1", "true", "yes"):
+    if LISTING_COMMAND_ALLOWED and os.getenv("SHUPPIN_ENABLED", "").strip() in ("1", "true", "yes"):
         from .cogs.listing_command import ListingCommandCog
 
         listing_cog = ListingCommandCog(bot)
         logger.info("ListingCommandCog enabled (SHUPPIN_ENABLED=1)")
     else:
-        logger.info("ListingCommandCog disabled (set SHUPPIN_ENABLED=1 to enable)")
+        logger.info("ListingCommandCog disabled (LISTING_COMMAND_ALLOWED=False)")
 
     # OrderCommandCog — /order (手動発注: JAN:cs → SS-07/SS-13書き込み)
     from .cogs.order_command import OrderCommandCog
 
-    order_cog = OrderCommandCog(bot)
+    order_cog = OrderCommandCog(bot) if ADMIN_COMMANDS_ENABLED else None
 
     # ZaikoCommandCog — /pro-kakidasi (GoQ在庫連携シート生成)
     from .cogs.zaiko_command import ZaikoCommandCog
@@ -381,7 +389,7 @@ async def main() -> None:
     # GoqUploadCommandCog — /goq-upload (SS-08シート5〜11→GoQ一括CSVアップロード)
     from .cogs.goq_upload_command import GoqUploadCommandCog
 
-    goq_upload_cog = GoqUploadCommandCog(bot)
+    goq_upload_cog = GoqUploadCommandCog(bot) if ADMIN_COMMANDS_ENABLED else None
 
     # CategoryCommandCog — /category-search (全7モールカテゴリ一括検索)
     from .cogs.category_command import CategoryCommandCog
@@ -391,7 +399,12 @@ async def main() -> None:
     # HaibanCommandCog — /haiban (廃盤管理・原価変更・在庫チェック)
     from .cogs.haiban_command import HaibanCommandCog
 
-    haiban_cog = HaibanCommandCog(bot)
+    haiban_cog = HaibanCommandCog(bot) if ADMIN_COMMANDS_ENABLED else None
+    if not ADMIN_COMMANDS_ENABLED:
+        logger.info(
+            "Admin commands /exec /order /goq-upload /haiban disabled "
+            "(ADMIN_COMMANDS_ENABLED=False)"
+        )
 
     # ProfitCommandCog — /profit (モール固有SKU/JANから利益率算出)
     from .cogs.profit_command import ProfitCommandCog
@@ -420,17 +433,21 @@ async def main() -> None:
         if skill_enabled:
             await bot.add_cog(skill_cog)
         await bot.add_cog(session_manage_cog)
-        await bot.add_cog(shell_exec_cog)
+        if shell_exec_cog is not None:
+            await bot.add_cog(shell_exec_cog)
         await bot.add_cog(shohin_cog)
         await bot.add_cog(image_gen_cog)
         await bot.add_cog(kw_cog)
-        await bot.add_cog(order_cog)
+        if order_cog is not None:
+            await bot.add_cog(order_cog)
         if listing_cog is not None:
             await bot.add_cog(listing_cog)
         await bot.add_cog(zaiko_cog)
-        await bot.add_cog(goq_upload_cog)
+        if goq_upload_cog is not None:
+            await bot.add_cog(goq_upload_cog)
         await bot.add_cog(category_cog)
-        await bot.add_cog(haiban_cog)
+        if haiban_cog is not None:
+            await bot.add_cog(haiban_cog)
         await bot.add_cog(profit_cog)
 
         # Cleanup old sessions on startup
